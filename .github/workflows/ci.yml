@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Build and test
+    runs-on: macos-26
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Show toolchain
+        run: xcodebuild -version
+
+      - name: Resolve packages
+        run: >-
+          xcodebuild
+          -project ClipStow.xcodeproj
+          -scheme ClipStow
+          -resolvePackageDependencies
+
+      - name: Run tests
+        run: >-
+          xcodebuild
+          -project ClipStow.xcodeproj
+          -scheme ClipStow
+          -destination 'platform=macOS'
+          CODE_SIGNING_ALLOWED=NO
+          test

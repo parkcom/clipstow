@@ -1,0 +1,32 @@
+.DS_Store
+
+# Xcode
+DerivedData/
+.derivedData*/
+.releaseDerivedData/
+build/
+*.xcarchive
+*.xcresult
+*.dSYM
+xcuserdata/
+*.xcuserstate
+
+# Swift Package Manager caches (keep Package.resolved)
+.build/
+.swiftpm/
+.sourcePackages/
+
+# Local releases and signing material
+*.dmg
+*.pkg
+*.p12
+*.cer
+*.mobileprovision
+*.provisionprofile
+
+# Local environment files
+.env
+.env.*
+
+# Private product notes
+mac_menu_memo_prototype_spec.md

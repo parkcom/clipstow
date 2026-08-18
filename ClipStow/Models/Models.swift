@@ -1,0 +1,100 @@
+import Foundation
+
+struct Note: Codable, Identifiable, Equatable {
+    let id: UUID
+    var title: String
+    var body: String
+    var categoryID: UUID?
+    let createdAt: Date
+    var updatedAt: Date
+
+    init(
+        id: UUID = UUID(),
+        title: String = "",
+        body: String = "",
+        categoryID: UUID? = nil,
+        createdAt: Date = Date(),
+        updatedAt: Date = Date()
+    ) {
+        self.id = id
+        self.title = title
+        self.body = body
+        self.categoryID = categoryID
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    var displayTitle: String {
+        title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? L10n.string("제목 없음")
+            : title
+    }
+}
+
+struct NoteCategory: Codable, Identifiable, Equatable {
+    let id: UUID
+    var name: String
+    let createdAt: Date
+
+    init(id: UUID = UUID(), name: String, createdAt: Date = Date()) {
+        self.id = id
+        self.name = name
+        self.createdAt = createdAt
+    }
+}
+
+struct ScratchItem: Identifiable, Equatable {
+    let id: UUID
+    let text: String
+    let capturedAt: Date
+
+    init(id: UUID = UUID(), text: String, capturedAt: Date = Date()) {
+        self.id = id
+        self.text = text
+        self.capturedAt = capturedAt
+    }
+}
+
+struct StoreSnapshot: Codable, Equatable {
+    static let currentVersion = 1
+
+    var version: Int
+    var notes: [Note]
+    var categories: [NoteCategory]
+    var lastSelectedNoteID: UUID?
+
+    init(
+        version: Int = StoreSnapshot.currentVersion,
+        notes: [Note] = [],
+        categories: [NoteCategory] = [],
+        lastSelectedNoteID: UUID? = nil
+    ) {
+        self.version = version
+        self.notes = notes
+        self.categories = categories
+        self.lastSelectedNoteID = lastSelectedNoteID
+    }
+}
+
+enum NoteFilter: Hashable {
+    case all
+    case uncategorized
+    case category(UUID)
+}
+
+enum EditorFocusTarget: Hashable {
+    case title
+    case body
+}
+
+struct FocusRequest: Equatable {
+    let id = UUID()
+    let target: EditorFocusTarget
+}
+
+enum MainSection: CaseIterable, Identifiable {
+    case notes
+    case scratchpad
+
+    var id: Self { self }
+}
