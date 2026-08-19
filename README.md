@@ -2,6 +2,10 @@
 
 > Capture now. Organize later.
 
+<p align="center">
+  <img src="docs/assets/clipstow-icon.png" width="160" alt="ClipStow app icon">
+</p>
+
 [![CI](https://github.com/parkcom/clipstow/actions/workflows/ci.yml/badge.svg)](https://github.com/parkcom/clipstow/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![macOS 13+](https://img.shields.io/badge/macOS-13%2B-black.svg)](https://www.apple.com/macos/)
@@ -21,14 +25,19 @@ ClipStow is a native macOS menu bar app for quickly capturing Markdown notes and
 - Launch at login and switch the interface between English, Korean, and Japanese.
 - Prevent multiple app instances from running simultaneously.
 
-## Requirements
+## Download and install
 
-- macOS 13 Ventura or later
-- Xcode 26 or later
+1. Download the latest `ClipStow-*.dmg` from [GitHub Releases](https://github.com/parkcom/clipstow/releases/latest).
+2. Open the DMG and drag **ClipStow** into **Applications**.
+3. Launch ClipStow from Applications. It appears in the menu bar rather than the Dock.
 
-ClipStow currently ships as source code only. There is no signed or notarized binary release yet.
+Release downloads are signed with a Developer ID certificate and notarized by Apple. ClipStow requires macOS 13 Ventura or later and supports both Apple Silicon and Intel Macs.
 
-## Build and run
+ClipStow does not update itself yet. Install a newer release from the same Releases page when one becomes available.
+
+## Build from source
+
+Building from source requires Xcode 26 or later.
 
 ```sh
 git clone https://github.com/parkcom/clipstow.git
@@ -87,7 +96,7 @@ Copy Capture checks `NSPasteboard.changeCount` every 250 ms and only reads text 
 - Search, attachments, tags, sync, sharing, version history, and deletion recovery are not included.
 - Categories and their notes are permanently removed after confirmation.
 - Unsaved Scratchpad content disappears when ClipStow quits.
-- Source builds are unsigned for distribution; Gatekeeper-ready releases require signing and notarization.
+- Automatic updates are not included; install new versions from GitHub Releases.
 
 ## Contributing and support
 
