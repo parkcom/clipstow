@@ -1,18 +1,20 @@
 # Changelog
 
-All notable changes to ClipStow will be documented in this file.
+All notable user-facing changes to ClipStow are documented here.
 
-The project follows [Semantic Versioning](https://semver.org/).
+## [0.1.0-beta.1] - 2026-08-19
 
-## [Unreleased]
+First public beta.
 
 ### Added
 
-- Initial public source preparation.
-- Native macOS menu bar notes, Markdown editing and preview.
-- Categories with rename and confirmed cascading deletion.
-- In-memory Copy Capture Scratchpad with per-item actions.
-- Resizable and pinnable popover.
+- Native macOS menu bar notes with Markdown editing and preview.
+- Categories with collapse, rename, deactivate, and confirmed deletion.
+- Memory-only Scratchpad with clipboard capture and per-item actions.
 - Customizable global shortcut with conflict feedback.
-- English, Korean, and Japanese localization.
-- Launch-at-login and single-instance behavior.
+- Resizable and pinnable popover.
+- English, Korean, and Japanese interfaces.
+- Launch at login and adjustable interface, note, and Scratchpad font sizes.
+- Single-instance protection.
+
+[0.1.0-beta.1]: https://github.com/parkcom/clipstow/releases/tag/v0.1.0-beta.1

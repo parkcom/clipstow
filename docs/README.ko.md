@@ -2,6 +2,10 @@
 
 > 지금 캡처하고, 나중에 정리하세요.
 
+<p align="center">
+  <img src="assets/clipstow-icon.png" width="160" alt="ClipStow 앱 아이콘">
+</p>
+
 [English](../README.md)
 
 ClipStow는 메뉴막대와 사용자가 지정한 전역 단축키에서 빠르게 여는 macOS 13+ Markdown 노트 앱입니다. 일반 노트는 로컬 JSON으로 저장하고, Copy Capture로 수집한 Scratchpad는 노트로 저장하기 전까지 메모리에만 둡니다.
@@ -18,14 +22,19 @@ ClipStow는 메뉴막대와 사용자가 지정한 전역 단축키에서 빠르
 - 영어·한국어·일본어 UI
 - 중복 앱 인스턴스 실행 방지
 
-## 요구 사항
+## 다운로드 및 설치
 
-- macOS 13 Ventura 이상
-- Xcode 26 이상
+1. [GitHub Releases](https://github.com/parkcom/clipstow/releases/latest)에서 최신 `ClipStow-*.dmg`를 다운로드합니다.
+2. DMG를 열고 **ClipStow**를 **Applications(응용 프로그램)** 폴더로 드래그합니다.
+3. 응용 프로그램 폴더에서 ClipStow를 실행합니다. Dock 대신 메뉴막대에 표시됩니다.
 
-현재는 소스 코드만 제공합니다. 서명·공증된 설치 파일은 아직 제공하지 않습니다.
+배포 파일은 Developer ID로 서명하고 Apple 공증을 거칩니다. macOS 13 Ventura 이상에서 실행되며 Apple Silicon과 Intel Mac을 모두 지원합니다.
 
-## 빌드 및 실행
+아직 자동 업데이트 기능은 없습니다. 새 버전이 나오면 같은 Releases 페이지에서 내려받아 설치하세요.
+
+## 소스에서 빌드
+
+소스 빌드에는 Xcode 26 이상이 필요합니다.
 
 ```sh
 git clone https://github.com/parkcom/clipstow.git
@@ -70,6 +79,6 @@ Copy Capture는 `⌘C` 키를 감시하거나 가로채지 않고 `NSPasteboard.
 - 한 번의 폴링 사이에 덮어쓴 중간 클립보드 내용은 복구할 수 없습니다.
 - 검색, 첨부 파일, 태그, 동기화, 공유, 버전 기록 및 삭제 복구는 제공하지 않습니다.
 - 저장하지 않은 Scratchpad는 앱 종료 시 사라집니다.
-- 현재 공개 소스는 배포용으로 서명·공증된 빌드가 아닙니다.
+- 자동 업데이트는 제공하지 않으며 새 버전은 GitHub Releases에서 직접 설치해야 합니다.
 
 버그 제보와 기여 방법은 [CONTRIBUTING.md](../CONTRIBUTING.md), 보안 문제 신고 방법은 [SECURITY.md](../SECURITY.md)를 확인하세요.
