@@ -1,12 +1,7 @@
 import MarkdownUI
 import SwiftUI
 
-private enum EditorMode: CaseIterable, Identifiable {
-    case edit
-    case preview
-
-    var id: Self { self }
-
+private extension NoteEditorMode {
     var title: LocalizedStringKey {
         switch self {
         case .edit: "편집"
@@ -15,11 +10,30 @@ private enum EditorMode: CaseIterable, Identifiable {
     }
 }
 
+final class MarkdownPreviewCache: ObservableObject {
+    @Published private(set) var content = MarkdownContent("")
+    private(set) var source: String?
+    private(set) var parseCount = 0
+
+    func prepare(markdown: String) {
+        guard source != markdown else { return }
+        source = markdown
+        content = MarkdownContent(markdown)
+        parseCount += 1
+    }
+}
+
 struct NoteEditorView: View {
     @ObservedObject var store: AppStore
-    @State private var mode: EditorMode = .edit
+    @ObservedObject private var editorDraft: EditorDraft
+    @StateObject private var previewCache = MarkdownPreviewCache()
     @State private var noteToDelete: Note?
     @FocusState private var focusedField: EditorFocusTarget?
+
+    init(store: AppStore) {
+        self.store = store
+        _editorDraft = ObservedObject(wrappedValue: store.editorDraft)
+    }
 
     var body: some View {
         Group {
@@ -27,7 +41,7 @@ struct NoteEditorView: View {
                 VStack(spacing: 0) {
                     editorHeader(note: note)
                     Divider()
-                    editorBody(note: note)
+                    editorBody
                 }
             } else {
                 VStack(spacing: 12) {
@@ -50,10 +64,17 @@ struct NoteEditorView: View {
         }
         .onChange(of: store.focusRequest?.id) { _ in
             guard let target = store.focusRequest?.target else { return }
-            mode = .edit
             DispatchQueue.main.async {
                 focusedField = target
             }
+        }
+        .onChange(of: store.selectedNoteID) { _ in
+            guard store.editorMode == .preview else { return }
+            previewCache.prepare(markdown: editorDraft.body)
+        }
+        .onAppear {
+            guard store.editorMode == .preview else { return }
+            previewCache.prepare(markdown: editorDraft.body)
         }
         .confirmationDialog(
             "노트 삭제",
@@ -105,8 +126,8 @@ struct NoteEditorView: View {
 
             Spacer()
 
-            Picker("Mode", selection: $mode) {
-                ForEach(EditorMode.allCases) { item in
+            Picker("Mode", selection: modeBinding) {
+                ForEach(NoteEditorMode.allCases) { item in
                     Text(item.title).tag(item)
                 }
             }
@@ -136,12 +157,12 @@ struct NoteEditorView: View {
     }
 
     @ViewBuilder
-    private func editorBody(note: Note) -> some View {
-        switch mode {
+    private var editorBody: some View {
+        switch store.editorMode {
         case .edit:
             TextEditor(
                 text: Binding(
-                    get: { store.selectedNote?.body ?? "" },
+                    get: { editorDraft.body },
                     set: store.updateSelectedNoteBody
                 )
             )
@@ -155,7 +176,7 @@ struct NoteEditorView: View {
 
         case .preview:
             ScrollView {
-                Markdown(note.body)
+                Markdown(previewCache.content)
                     .markdownTheme(.gitHub)
                     .markdownTextStyle {
                         FontSize(store.noteFontSize)
@@ -168,4 +189,15 @@ struct NoteEditorView: View {
         }
     }
 
+    private var modeBinding: Binding<NoteEditorMode> {
+        Binding(
+            get: { store.editorMode },
+            set: { newMode in
+                if newMode == .preview {
+                    previewCache.prepare(markdown: editorDraft.body)
+                }
+                store.setEditorMode(newMode)
+            }
+        )
+    }
 }

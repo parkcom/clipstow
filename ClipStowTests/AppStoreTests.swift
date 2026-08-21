@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import ClipStow
 
@@ -36,8 +37,11 @@ final class AppStoreTests: XCTestCase {
 
         XCTAssertEqual(store.sortedNotes.map(\.id), [second.id, first.id])
         store.updateSelectedNoteBody("Updated")
-        XCTAssertEqual(store.sortedNotes.first?.id, first.id)
+        XCTAssertEqual(store.editorDraft.body, "Updated")
+        XCTAssertEqual(store.notes.first(where: { $0.id == first.id })?.body, "")
+        XCTAssertEqual(store.sortedNotes.first?.id, second.id)
         XCTAssertTrue(store.flushNow())
+        XCTAssertEqual(store.sortedNotes.first?.id, first.id)
         XCTAssertEqual(repository.snapshot?.notes.first(where: { $0.id == first.id })?.body, "Updated")
 
         currentDate = Date(timeIntervalSince1970: 400)
@@ -159,6 +163,33 @@ final class AppStoreTests: XCTestCase {
 
         XCTAssertTrue(relaunchedStore.isCaptureEnabled)
         XCTAssertTrue(relaunchedStore.scratchItems.isEmpty)
+    }
+
+    func testScratchpadChangesDoNotPublishTheWholeAppStore() {
+        let store = AppStore(repository: InMemoryNoteRepository(), userDefaults: defaults)
+        var appStoreDidPublish = false
+        let cancellable = store.objectWillChange.sink {
+            appStoreDidPublish = true
+        }
+
+        store.appendScratchItem(text: "Captured", capturedAt: Date())
+
+        XCTAssertEqual(store.scratchItems.map(\.text), ["Captured"])
+        XCTAssertFalse(appStoreDidPublish)
+        withExtendedLifetime(cancellable) {}
+    }
+
+    func testScratchItemBuildsBoundedPreviewWithoutChangingOriginalText() {
+        let longText = String(repeating: "Long text ", count: 200)
+        let item = ScratchItem(text: longText)
+
+        XCTAssertEqual(item.text, longText)
+        XCTAssertTrue(item.isPreviewTruncated)
+        XCTAssertLessThan(item.previewText.count, item.text.count)
+
+        let shortItem = ScratchItem(text: "Short")
+        XCTAssertFalse(shortItem.isPreviewTruncated)
+        XCTAssertEqual(shortItem.previewText, "Short")
     }
 
     func testFontSettingsAreClampedAndRestored() {
@@ -289,6 +320,89 @@ final class AppStoreTests: XCTestCase {
         XCTAssertEqual(repository.snapshot?.notes.first?.body, "two")
     }
 
+    func testBodyEditingStaysInDraftUntilDebounceCommitsIt() {
+        let note = Note(body: "Original")
+        let saved = expectation(description: "draft committed")
+        let repository = InMemoryNoteRepository(
+            snapshot: StoreSnapshot(notes: [note], lastSelectedNoteID: note.id)
+        )
+        repository.onSave = { saved.fulfill() }
+        let store = AppStore(
+            repository: repository,
+            userDefaults: defaults,
+            saveDebounce: 0.02
+        )
+
+        store.updateSelectedNoteBody("Draft")
+
+        XCTAssertEqual(store.editorDraft.body, "Draft")
+        XCTAssertEqual(store.selectedNote?.body, "Original")
+
+        wait(for: [saved], timeout: 1)
+        XCTAssertEqual(store.selectedNote?.body, "Draft")
+        XCTAssertEqual(repository.snapshot?.notes.first?.body, "Draft")
+    }
+
+    func testSwitchingNotesFlushesDraftAndLoadsNextDraft() {
+        let first = Note(body: "First")
+        let second = Note(body: "Second")
+        let repository = InMemoryNoteRepository(
+            snapshot: StoreSnapshot(
+                notes: [first, second],
+                lastSelectedNoteID: first.id
+            )
+        )
+        let store = AppStore(
+            repository: repository,
+            userDefaults: defaults,
+            saveDebounce: 60
+        )
+
+        store.updateSelectedNoteBody("Edited first")
+        store.selectNote(second.id)
+
+        XCTAssertEqual(store.selectedNoteID, second.id)
+        XCTAssertEqual(store.editorDraft.body, "Second")
+        XCTAssertEqual(
+            repository.snapshot?.notes.first(where: { $0.id == first.id })?.body,
+            "Edited first"
+        )
+    }
+
+    func testDebouncedPersistenceRunsOffMainThread() {
+        let note = Note()
+        let saved = expectation(description: "background save")
+        let repository = InMemoryNoteRepository(
+            snapshot: StoreSnapshot(notes: [note], lastSelectedNoteID: note.id)
+        )
+        var saveWasOnMainThread: Bool?
+        repository.onSave = {
+            saveWasOnMainThread = Thread.isMainThread
+            saved.fulfill()
+        }
+        let store = AppStore(
+            repository: repository,
+            userDefaults: defaults,
+            saveDebounce: 0.02
+        )
+
+        store.updateSelectedNoteBody("Background")
+
+        wait(for: [saved], timeout: 1)
+        XCTAssertEqual(saveWasOnMainThread, false)
+    }
+
+    func testMarkdownPreviewCacheParsesOnlyWhenSourceChanges() {
+        let cache = MarkdownPreviewCache()
+
+        cache.prepare(markdown: "# Heading")
+        cache.prepare(markdown: "# Heading")
+        XCTAssertEqual(cache.parseCount, 1)
+
+        cache.prepare(markdown: "# Changed")
+        XCTAssertEqual(cache.parseCount, 2)
+    }
+
     func testMarkdownFixtureContainsAllRequiredSyntax() {
         let fixture = """
         # Heading
@@ -335,6 +449,33 @@ final class AppStoreTests: XCTestCase {
 
         restoredStore.setAppLanguage(.system)
         XCTAssertNil(defaults.string(forKey: AppStore.appLanguageDefaultsKey))
+    }
+
+    func testEditorModeIsPreservedAcrossPresentationAndRelaunch() {
+        let note = Note(body: "# Preview")
+        let repository = InMemoryNoteRepository(
+            snapshot: StoreSnapshot(notes: [note], lastSelectedNoteID: note.id)
+        )
+        let store = AppStore(repository: repository, userDefaults: defaults)
+
+        store.setEditorMode(.preview)
+        store.prepareForPresentation()
+
+        XCTAssertEqual(store.editorMode, .preview)
+        XCTAssertNil(store.focusRequest)
+
+        let relaunchedStore = AppStore(repository: repository, userDefaults: defaults)
+        XCTAssertEqual(relaunchedStore.editorMode, .preview)
+    }
+
+    func testCreatingNoteSwitchesPreviewBackToEditMode() {
+        let store = AppStore(repository: InMemoryNoteRepository(), userDefaults: defaults)
+        store.setEditorMode(.preview)
+
+        _ = store.createNote()
+
+        XCTAssertEqual(store.editorMode, .edit)
+        XCTAssertEqual(store.focusRequest?.target, .title)
     }
 
     func testPopoverSizeIsClampedToSupportedBounds() {

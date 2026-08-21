@@ -44,14 +44,49 @@ struct NoteCategory: Codable, Identifiable, Equatable {
 }
 
 struct ScratchItem: Identifiable, Equatable {
+    static let previewCharacterLimit = 1_200
+    static let previewLineLimit = 8
+
     let id: UUID
     let text: String
     let capturedAt: Date
+    let previewText: String
+    let isPreviewTruncated: Bool
 
     init(id: UUID = UUID(), text: String, capturedAt: Date = Date()) {
         self.id = id
         self.text = text
         self.capturedAt = capturedAt
+        let preview = Self.makePreview(for: text)
+        previewText = preview.text
+        isPreviewTruncated = preview.isTruncated
+    }
+
+    private static func makePreview(for text: String) -> (text: String, isTruncated: Bool) {
+        var index = text.startIndex
+        var characterCount = 0
+        var lineBreakCount = 0
+
+        while index < text.endIndex && characterCount < previewCharacterLimit {
+            let character = text[index]
+            if character.isNewline {
+                lineBreakCount += 1
+                if lineBreakCount >= previewLineLimit {
+                    break
+                }
+            }
+            index = text.index(after: index)
+            characterCount += 1
+        }
+
+        guard index < text.endIndex else { return (text, false) }
+        return (String(text[..<index]) + "…", true)
+    }
+}
+
+extension String {
+    var containsNonWhitespaceAndNewline: Bool {
+        unicodeScalars.contains { !CharacterSet.whitespacesAndNewlines.contains($0) }
     }
 }
 

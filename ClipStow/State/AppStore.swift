@@ -18,6 +18,76 @@ enum CategoryCreationError: LocalizedError, Equatable {
     }
 }
 
+final class EditorDraft: ObservableObject {
+    @Published private(set) var body = ""
+    private(set) var noteID: UUID?
+    private(set) var isDirty = false
+
+    func load(_ note: Note?) {
+        noteID = note?.id
+        let nextBody = note?.body ?? ""
+        if body != nextBody {
+            body = nextBody
+        }
+        isDirty = false
+    }
+
+    func updateBody(_ body: String) {
+        guard self.body != body else { return }
+        self.body = body
+        isDirty = true
+    }
+
+    func markCommitted() {
+        isDirty = false
+    }
+}
+
+final class ScratchpadState: ObservableObject {
+    @Published private(set) var items: [ScratchItem] = []
+
+    func append(text: String, capturedAt: Date) {
+        guard text.containsNonWhitespaceAndNewline else { return }
+        items.append(ScratchItem(text: text, capturedAt: capturedAt))
+    }
+
+    func clear() {
+        items.removeAll()
+    }
+
+    func delete(_ itemID: UUID) {
+        items.removeAll { $0.id == itemID }
+    }
+}
+
+struct NoteCountSummary {
+    let uncategorized: Int
+    let byCategory: [UUID: Int]
+
+    init(notes: [Note]) {
+        var uncategorized = 0
+        var byCategory: [UUID: Int] = [:]
+
+        for note in notes {
+            if let categoryID = note.categoryID {
+                byCategory[categoryID, default: 0] += 1
+            } else {
+                uncategorized += 1
+            }
+        }
+
+        self.uncategorized = uncategorized
+        self.byCategory = byCategory
+    }
+}
+
+enum NoteEditorMode: String, CaseIterable, Identifiable {
+    case edit
+    case preview
+
+    var id: Self { self }
+}
+
 final class AppStore: ObservableObject {
     static let captureDefaultsKey = "copyCaptureEnabled"
     static let uiFontSizeDefaultsKey = "uiFontSize"
@@ -26,6 +96,7 @@ final class AppStore: ObservableObject {
     static let categorySidebarVisibleDefaultsKey = "categorySidebarVisible"
     static let keepPopoverOpenDefaultsKey = "keepPopoverOpen"
     static let appLanguageDefaultsKey = L10n.languageDefaultsKey
+    static let editorModeDefaultsKey = "noteEditorMode"
 
     static let defaultUIFontSize = 13.0
     static let defaultNoteFontSize = 14.0
@@ -37,7 +108,6 @@ final class AppStore: ObservableObject {
     @Published private(set) var categories: [NoteCategory] = []
     @Published var selectedNoteID: UUID?
     @Published private(set) var noteFilter: NoteFilter = .all
-    @Published private(set) var scratchItems: [ScratchItem] = []
     @Published private(set) var isCaptureEnabled: Bool
     @Published private(set) var focusRequest: FocusRequest?
     @Published private(set) var persistenceError: String?
@@ -54,6 +124,10 @@ final class AppStore: ObservableObject {
     @Published private(set) var isCategorySidebarVisible: Bool
     @Published private(set) var keepsPopoverOpen: Bool
     @Published private(set) var appLanguage: AppLanguage
+    @Published private(set) var editorMode: NoteEditorMode
+
+    let editorDraft = EditorDraft()
+    let scratchpadState = ScratchpadState()
 
     var onCaptureSettingChanged: ((Bool) -> Void)?
     var onKeepPopoverOpenChanged: ((Bool) -> Void)?
@@ -65,7 +139,12 @@ final class AppStore: ObservableObject {
     private let saveDebounce: TimeInterval
     private let now: () -> Date
     private let loginItemManager: LoginItemManaging
+    private let persistenceQueue = DispatchQueue(
+        label: "com.parkcom.clipstow.persistence",
+        qos: .utility
+    )
     private var saveWorkItem: DispatchWorkItem?
+    private var latestSaveGeneration = 0
 
     init(
         repository: NoteRepository,
@@ -105,6 +184,9 @@ final class AppStore: ObservableObject {
         appLanguage = userDefaults.string(forKey: Self.appLanguageDefaultsKey)
             .flatMap(AppLanguage.init(rawValue:))
             ?? .system
+        editorMode = userDefaults.string(forKey: Self.editorModeDefaultsKey)
+            .flatMap(NoteEditorMode.init(rawValue:))
+            ?? .edit
         let loginItemState = loginItemManager.state
         launchAtLoginEnabled = loginItemState == .enabled || loginItemState == .requiresApproval
         loginItemNeedsApproval = loginItemState == .requiresApproval
@@ -123,6 +205,7 @@ final class AppStore: ObservableObject {
             persistenceError = error.localizedDescription
             isPersistenceReadOnly = true
         }
+        editorDraft.load(selectedNote)
     }
 
     deinit {
@@ -151,9 +234,17 @@ final class AppStore: ObservableObject {
         }
     }
 
+    var noteCounts: NoteCountSummary {
+        NoteCountSummary(notes: notes)
+    }
+
     var selectedNote: Note? {
         guard let selectedNoteID else { return nil }
         return notes.first(where: { $0.id == selectedNoteID })
+    }
+
+    var scratchItems: [ScratchItem] {
+        scratchpadState.items
     }
 
     var scratchSuggestedTitle: String {
@@ -172,13 +263,20 @@ final class AppStore: ObservableObject {
 
         if selectedNote == nil {
             selectedNoteID = sortedNotes.first?.id
+            editorDraft.load(selectedNote)
+        } else if editorDraft.noteID != selectedNoteID {
+            editorDraft.load(selectedNote)
         }
-        requestFocus(target)
+        if editorMode == .edit {
+            requestFocus(target, switchesToEditMode: false)
+        }
     }
 
     @discardableResult
     func createNote(focus target: EditorFocusTarget = .title) -> UUID? {
         guard !isPersistenceReadOnly else { return nil }
+
+        commitEditorDraftIfNeeded()
 
         let categoryID: UUID?
         if case .category(let selectedCategoryID) = noteFilter {
@@ -191,6 +289,7 @@ final class AppStore: ObservableObject {
         let note = Note(categoryID: categoryID, createdAt: timestamp, updatedAt: timestamp)
         notes.append(note)
         selectedNoteID = note.id
+        editorDraft.load(note)
         scheduleSave()
         requestFocus(target)
         return note.id
@@ -198,18 +297,23 @@ final class AppStore: ObservableObject {
 
     func selectNote(_ noteID: UUID?) {
         guard selectedNoteID != noteID else { return }
-        flushNow()
+        _ = flushNow()
         selectedNoteID = noteID
+        editorDraft.load(selectedNote)
         scheduleSave()
     }
 
     func setFilter(_ filter: NoteFilter) {
         noteFilter = filter
+        let visibleNotes = filteredNotes
         if let selectedNoteID,
-           filteredNotes.contains(where: { $0.id == selectedNoteID }) {
+           visibleNotes.contains(where: { $0.id == selectedNoteID }) {
             return
         }
-        self.selectedNoteID = filteredNotes.first?.id
+        commitEditorDraftIfNeeded()
+        self.selectedNoteID = visibleNotes.first?.id
+        editorDraft.load(selectedNote)
+        scheduleSave()
     }
 
     func updateSelectedNoteTitle(_ title: String) {
@@ -225,7 +329,12 @@ final class AppStore: ObservableObject {
     }
 
     func updateSelectedNoteBody(_ body: String) {
-        updateSelectedNote { $0.body = body }
+        guard !isPersistenceReadOnly, selectedNoteID != nil else { return }
+        if editorDraft.noteID != selectedNoteID {
+            editorDraft.load(selectedNote)
+        }
+        editorDraft.updateBody(body)
+        scheduleSave()
     }
 
     func updateSelectedNoteCategory(_ categoryID: UUID?) {
@@ -280,6 +389,8 @@ final class AppStore: ObservableObject {
             throw CategoryCreationError.duplicateName
         }
 
+        cancelScheduledSaveAndCommitEditorDraft()
+
         var nextCategories = categories
         nextCategories[index].name = name
         let nextSnapshot = StoreSnapshot(
@@ -289,7 +400,7 @@ final class AppStore: ObservableObject {
         )
 
         do {
-            try repository.save(nextSnapshot)
+            try saveSnapshotSynchronously(nextSnapshot).get()
             categories = nextCategories
             persistenceError = nil
         } catch {
@@ -306,6 +417,8 @@ final class AppStore: ObservableObject {
         guard !isPersistenceReadOnly,
               categories.contains(where: { $0.id == categoryID }) else { return false }
 
+        cancelScheduledSaveAndCommitEditorDraft()
+
         let nextCategories = categories.filter { $0.id != categoryID }
         let nextNotes = notes.filter { $0.categoryID != categoryID }
         let nextFilter: NoteFilter = noteFilter == .category(categoryID) ? .all : noteFilter
@@ -321,11 +434,12 @@ final class AppStore: ObservableObject {
         )
 
         do {
-            try repository.save(nextSnapshot)
+            try saveSnapshotSynchronously(nextSnapshot).get()
             categories = nextCategories
             notes = nextNotes
             noteFilter = nextFilter
             selectedNoteID = nextSelectedNoteID
+            editorDraft.load(selectedNote)
             persistenceError = nil
             return true
         } catch {
@@ -342,6 +456,8 @@ final class AppStore: ObservableObject {
         guard !isPersistenceReadOnly,
               notes.contains(where: { $0.id == noteID }) else { return false }
 
+        cancelScheduledSaveAndCommitEditorDraft()
+
         let nextNotes = notes.filter { $0.id != noteID }
         let nextSelectedNoteID = nextSelectedNoteID(
             currentSelection: selectedNoteID == noteID ? nil : selectedNoteID,
@@ -355,9 +471,10 @@ final class AppStore: ObservableObject {
         )
 
         do {
-            try repository.save(nextSnapshot)
+            try saveSnapshotSynchronously(nextSnapshot).get()
             notes = nextNotes
             selectedNoteID = nextSelectedNoteID
+            editorDraft.load(selectedNote)
             persistenceError = nil
             return true
         } catch {
@@ -476,6 +593,12 @@ final class AppStore: ObservableObject {
         onLanguageChanged?()
     }
 
+    func setEditorMode(_ mode: NoteEditorMode) {
+        guard editorMode != mode else { return }
+        editorMode = mode
+        userDefaults.set(mode.rawValue, forKey: Self.editorModeDefaultsKey)
+    }
+
     func shortcutSettingDidChange() {
         onShortcutSettingChanged?()
     }
@@ -491,16 +614,15 @@ final class AppStore: ObservableObject {
     }
 
     func appendScratchItem(text: String, capturedAt: Date) {
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        scratchItems.append(ScratchItem(text: text, capturedAt: capturedAt))
+        scratchpadState.append(text: text, capturedAt: capturedAt)
     }
 
     func clearScratchpad() {
-        scratchItems.removeAll()
+        scratchpadState.clear()
     }
 
     func deleteScratchItem(_ itemID: UUID) {
-        scratchItems.removeAll { $0.id == itemID }
+        scratchpadState.delete(itemID)
     }
 
     func scratchSuggestedTitle(for item: ScratchItem) -> String {
@@ -523,7 +645,7 @@ final class AppStore: ObservableObject {
     func saveScratchpadAsNote(title: String, categoryID: UUID?) -> Bool {
         guard !isPersistenceReadOnly, !scratchItems.isEmpty else { return false }
         if persistNewNote(title: title, body: scratchMarkdownBody, categoryID: categoryID) {
-            scratchItems.removeAll()
+            scratchpadState.clear()
             return true
         }
         return false
@@ -544,18 +666,23 @@ final class AppStore: ObservableObject {
         }
     }
 
-    func requestFocus(_ target: EditorFocusTarget) {
+    func requestFocus(
+        _ target: EditorFocusTarget,
+        switchesToEditMode: Bool = true
+    ) {
+        if switchesToEditMode {
+            setEditorMode(.edit)
+        }
         focusRequest = FocusRequest(target: target)
     }
 
     @discardableResult
     func flushNow() -> Bool {
-        saveWorkItem?.cancel()
-        saveWorkItem = nil
+        cancelScheduledSaveAndCommitEditorDraft()
         guard !isPersistenceReadOnly else { return false }
 
         do {
-            try repository.save(snapshot())
+            try saveSnapshotSynchronously(snapshot()).get()
             persistenceError = nil
             return true
         } catch {
@@ -571,6 +698,7 @@ final class AppStore: ObservableObject {
         guard !isPersistenceReadOnly,
               let selectedNoteID,
               let index = notes.firstIndex(where: { $0.id == selectedNoteID }) else { return }
+        commitEditorDraftIfNeeded()
         mutation(&notes[index])
         notes[index].updatedAt = now()
         scheduleSave()
@@ -578,6 +706,8 @@ final class AppStore: ObservableObject {
 
     private func persistNewNote(title: String, body: String, categoryID: UUID?) -> Bool {
         guard !isPersistenceReadOnly else { return false }
+
+        cancelScheduledSaveAndCommitEditorDraft()
 
         let timestamp = now()
         let note = Note(
@@ -596,9 +726,10 @@ final class AppStore: ObservableObject {
         )
 
         do {
-            try repository.save(nextSnapshot)
+            try saveSnapshotSynchronously(nextSnapshot).get()
             notes = nextNotes
             selectedNoteID = note.id
+            editorDraft.load(note)
             persistenceError = nil
             requestFocus(.body)
             return true
@@ -647,10 +778,65 @@ final class AppStore: ObservableObject {
         guard !isPersistenceReadOnly else { return }
         saveWorkItem?.cancel()
         let workItem = DispatchWorkItem { [weak self] in
-            self?.flushNow()
+            guard let self else { return }
+            self.saveWorkItem = nil
+            self.commitEditorDraftIfNeeded()
+            self.enqueueSave(self.snapshot())
         }
         saveWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + saveDebounce, execute: workItem)
+    }
+
+    private func cancelScheduledSaveAndCommitEditorDraft() {
+        saveWorkItem?.cancel()
+        saveWorkItem = nil
+        commitEditorDraftIfNeeded()
+    }
+
+    private func commitEditorDraftIfNeeded() {
+        guard editorDraft.isDirty,
+              let noteID = editorDraft.noteID,
+              let index = notes.firstIndex(where: { $0.id == noteID }) else { return }
+
+        notes[index].body = editorDraft.body
+        notes[index].updatedAt = now()
+        editorDraft.markCommitted()
+    }
+
+    private func enqueueSave(_ snapshot: StoreSnapshot) {
+        latestSaveGeneration += 1
+        let generation = latestSaveGeneration
+        let repository = repository
+
+        persistenceQueue.async { [weak self] in
+            let result = Result<Void, Error> {
+                try repository.save(snapshot)
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, generation == self.latestSaveGeneration else { return }
+                switch result {
+                case .success:
+                    self.persistenceError = nil
+                case .failure(let error):
+                    self.persistenceError = L10n.format(
+                        "자동 저장에 실패했습니다. 편집 내용은 앱이 실행되는 동안 유지됩니다. %@",
+                        error.localizedDescription
+                    )
+                }
+            }
+        }
+    }
+
+    private func saveSnapshotSynchronously(
+        _ snapshot: StoreSnapshot
+    ) -> Result<Void, Error> {
+        latestSaveGeneration += 1
+        let repository = repository
+        return persistenceQueue.sync {
+            Result {
+                try repository.save(snapshot)
+            }
+        }
     }
 
     private func snapshot() -> StoreSnapshot {

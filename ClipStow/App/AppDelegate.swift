@@ -144,15 +144,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         store.onCaptureSettingChanged = { [weak self] enabled in
             self?.captureService.setEnabled(enabled)
             self?.updateStatusIcon(captureEnabled: enabled)
+            self?.updateCaptureTimer(enabled: enabled)
         }
         captureService.setEnabled(store.isCaptureEnabled)
         updateStatusIcon(captureEnabled: store.isCaptureEnabled)
+        updateCaptureTimer(enabled: store.isCaptureEnabled)
+    }
+
+    private func updateCaptureTimer(enabled: Bool) {
+        captureTimer?.invalidate()
+        captureTimer = nil
+        guard enabled else { return }
 
         let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.captureService.poll()
             }
         }
+        timer.tolerance = 0.05
         captureTimer = timer
         RunLoop.main.add(timer, forMode: .common)
     }
@@ -194,7 +203,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         configurePopoverWindow()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-            self?.store.requestFocus(.body)
+            guard let self, self.store.editorMode == .edit else { return }
+            self.store.requestFocus(.body, switchesToEditMode: false)
         }
     }
 
