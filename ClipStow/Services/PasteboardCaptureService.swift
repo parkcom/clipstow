@@ -93,7 +93,7 @@ final class PasteboardCaptureService {
             onAccessStateChange(pasteboard.accessState)
             return
         }
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard text.containsNonWhitespaceAndNewline else { return }
 
         onCapture(text, now())
         onAccessStateChange(pasteboard.accessState)

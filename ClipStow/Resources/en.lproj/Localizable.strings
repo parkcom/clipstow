@@ -98,6 +98,8 @@
 "편집" = "Edit";
 "편집할 노트를 선택하세요" = "Select a note to edit";
 "항목 삭제" = "Delete Item";
+"더 보기" = "Show More";
+"접기" = "Show Less";
 "항목을 노트로 복사" = "Copy Item to Note";
 "현재 노트 삭제" = "Delete Current Note";
 "호출 단축키" = "Global Shortcut";

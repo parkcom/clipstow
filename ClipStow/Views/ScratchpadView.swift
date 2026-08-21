@@ -2,17 +2,18 @@ import SwiftUI
 
 struct ScratchpadView: View {
     @ObservedObject var store: AppStore
+    @ObservedObject private var scratchpadState: ScratchpadState
     let onSaved: () -> Void
 
     @State private var isConfirmingClear = false
     @State private var isSaving = false
     @State private var itemToCopy: ScratchItem?
 
-    private let timeFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        return formatter
-    }()
+    init(store: AppStore, onSaved: @escaping () -> Void) {
+        self.store = store
+        _scratchpadState = ObservedObject(wrappedValue: store.scratchpadState)
+        self.onSaved = onSaved
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -63,10 +64,10 @@ struct ScratchpadView: View {
                 .background(Color(nsColor: .controlBackgroundColor))
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
-                Text("\(store.scratchItems.count)")
+                Text("\(scratchpadState.items.count)")
                     .stashFont(11, weight: .semibold, design: .rounded)
                     .monospacedDigit()
-                    .foregroundStyle(store.scratchItems.isEmpty ? Color.secondary : Color.accentColor)
+                    .foregroundStyle(scratchpadState.items.isEmpty ? Color.secondary : Color.accentColor)
                     .frame(minWidth: 26, minHeight: 24)
                     .background(Color(nsColor: .controlBackgroundColor))
                     .clipShape(Capsule())
@@ -93,7 +94,7 @@ struct ScratchpadView: View {
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
-                    if store.scratchItems.isEmpty {
+                    if scratchpadState.items.isEmpty {
                         VStack(spacing: 12) {
                             ZStack {
                                 RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -112,60 +113,15 @@ struct ScratchpadView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.top, 110)
                     } else {
-                        ForEach(Array(store.scratchItems.enumerated()), id: \.element.id) { index, item in
-                            HStack(alignment: .top, spacing: 12) {
-                                Text("\(index + 1)")
-                                    .stashFont(10, weight: .semibold, design: .rounded)
-                                    .monospacedDigit()
-                                    .foregroundStyle(.secondary)
-                                    .frame(width: 24, height: 24)
-                                    .background(Color(nsColor: .windowBackgroundColor))
-                                    .clipShape(Circle())
-
-                                VStack(alignment: .leading, spacing: 8) {
-                                    HStack {
-                                        Label(
-                                            timeFormatter.string(from: item.capturedAt),
-                                            systemImage: "clock"
-                                        )
-                                        .stashFont(10)
-                                        .monospacedDigit()
-                                        .foregroundStyle(.tertiary)
-
-                                        Spacer()
-
-                                        Button {
-                                            itemToCopy = item
-                                        } label: {
-                                            Label("노트로 복사", systemImage: "note.text.badge.plus")
-                                        }
-                                        .buttonStyle(.borderless)
-                                        .controlSize(.small)
-                                        .disabled(store.isPersistenceReadOnly)
-
-                                        Button(role: .destructive) {
-                                            store.deleteScratchItem(item.id)
-                                        } label: {
-                                            Image(systemName: "trash")
-                                        }
-                                        .buttonStyle(.borderless)
-                                        .controlSize(.small)
-                                        .help("항목 삭제")
-                                    }
-
-                                    Text(item.text)
-                                        .font(.system(size: store.scratchpadFontSize))
-                                        .textSelection(.enabled)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                }
-                            }
-                            .padding(13)
-                            .background(Color(nsColor: .controlBackgroundColor))
-                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                            .overlay {
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .strokeBorder(Color.primary.opacity(0.05))
-                            }
+                        ForEach(scratchpadState.items) { item in
+                            ScratchItemRow(
+                                item: item,
+                                fontSize: store.scratchpadFontSize,
+                                isReadOnly: store.isPersistenceReadOnly,
+                                onCopy: { itemToCopy = item },
+                                onDelete: { store.deleteScratchItem(item.id) }
+                            )
+                            .equatable()
                         }
                     }
                 }
@@ -180,7 +136,7 @@ struct ScratchpadView: View {
                 } label: {
                     Label("모두 지우기", systemImage: "trash")
                 }
-                .disabled(store.scratchItems.isEmpty)
+                .disabled(scratchpadState.items.isEmpty)
 
                 Spacer()
 
@@ -191,7 +147,7 @@ struct ScratchpadView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
-                .disabled(store.scratchItems.isEmpty || store.isPersistenceReadOnly)
+                .disabled(scratchpadState.items.isEmpty || store.isPersistenceReadOnly)
             }
             .padding(.horizontal, 16)
             .frame(height: 52)
@@ -215,6 +171,73 @@ struct ScratchpadView: View {
             SaveScratchpadSheet(store: store, item: item) {
                 itemToCopy = nil
             }
+        }
+    }
+}
+
+private struct ScratchItemRow: View, Equatable {
+    let item: ScratchItem
+    let fontSize: Double
+    let isReadOnly: Bool
+    let onCopy: () -> Void
+    let onDelete: () -> Void
+
+    @State private var isExpanded = false
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.item == rhs.item &&
+            lhs.fontSize == rhs.fontSize &&
+            lhs.isReadOnly == rhs.isReadOnly
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label {
+                    Text(item.capturedAt, format: .dateTime.hour().minute().second())
+                } icon: {
+                    Image(systemName: "clock")
+                }
+                .stashFont(10)
+                .monospacedDigit()
+                .foregroundStyle(.tertiary)
+
+                Spacer()
+
+                Button(action: onCopy) {
+                    Label("노트로 복사", systemImage: "note.text.badge.plus")
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .disabled(isReadOnly)
+
+                Button(role: .destructive, action: onDelete) {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .help("항목 삭제")
+            }
+
+            Text(isExpanded ? item.text : item.previewText)
+                .font(.system(size: fontSize))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            if item.isPreviewTruncated {
+                Button(isExpanded ? L10n.string("접기") : L10n.string("더 보기")) {
+                    isExpanded.toggle()
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+            }
+        }
+        .padding(13)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.05))
         }
     }
 }

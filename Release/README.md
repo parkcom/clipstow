@@ -25,22 +25,22 @@ xcodebuild \
   -scheme ClipStow \
   -configuration Release \
   -destination 'generic/platform=macOS' \
-  -archivePath build/ClipStow-v0.1.0-beta.1.xcarchive \
+  -archivePath build/ClipStow-v0.1.0-beta.2.xcarchive \
   -derivedDataPath .releaseDerivedData \
   -allowProvisioningUpdates \
   archive
 
 xcodebuild \
   -exportArchive \
-  -archivePath build/ClipStow-v0.1.0-beta.1.xcarchive \
-  -exportPath build/ClipStow-v0.1.0-beta.1-export \
+  -archivePath build/ClipStow-v0.1.0-beta.2.xcarchive \
+  -exportPath build/ClipStow-v0.1.0-beta.2-export \
   -exportOptionsPlist Release/ExportOptions.plist \
   -allowProvisioningUpdates
 
 xcodebuild \
   -exportArchive \
-  -archivePath build/ClipStow-v0.1.0-beta.1.xcarchive \
-  -exportPath build/ClipStow-v0.1.0-beta.1-notarization \
+  -archivePath build/ClipStow-v0.1.0-beta.2.xcarchive \
+  -exportPath build/ClipStow-v0.1.0-beta.2-notarization \
   -exportOptionsPlist Release/NotarizeOptions.plist \
   -allowProvisioningUpdates
 ```
@@ -50,24 +50,24 @@ After Apple finishes processing, export the notarized app:
 ```sh
 xcodebuild \
   -exportNotarizedApp \
-  -archivePath build/ClipStow-v0.1.0-beta.1.xcarchive \
-  -exportPath build/ClipStow-v0.1.0-beta.1-notarized
+  -archivePath build/ClipStow-v0.1.0-beta.2.xcarchive \
+  -exportPath build/ClipStow-v0.1.0-beta.2-notarized
 ```
 
 ## Create and notarize the DMG
 
 ```sh
 scripts/create-release-dmg.sh \
-  build/ClipStow-v0.1.0-beta.1-notarized/ClipStow.app \
-  build/ClipStow-v0.1.0-beta.1/ClipStow-0.1.0-beta.1.dmg \
+  build/ClipStow-v0.1.0-beta.2-notarized/ClipStow.app \
+  build/ClipStow-v0.1.0-beta.2/ClipStow-0.1.0-beta.2.dmg \
   ClipStow-Notary
 
 scripts/verify-release.sh \
-  build/ClipStow-v0.1.0-beta.1/ClipStow-0.1.0-beta.1.dmg
+  build/ClipStow-v0.1.0-beta.2/ClipStow-0.1.0-beta.2.dmg
 ```
 
 The DMG script refuses to overwrite an existing artifact, validates the app ticket, signs and notarizes the DMG, checks Gatekeeper, and prints its SHA-256 checksum.
 
 ## Publish
 
-Create the annotated tag `v0.1.0-beta.1`, push it, and create a GitHub prerelease using the matching changelog entry. Attach only the notarized DMG and its checksum. Do not upload certificates, CSRs, private keys, archives, or notarization credentials.
+Create the annotated tag `v0.1.0-beta.2`, push it, and create a GitHub prerelease using the matching changelog entry. Attach only the notarized DMG and its checksum. Do not upload certificates, CSRs, private keys, archives, or notarization credentials.

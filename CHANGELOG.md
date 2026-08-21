@@ -2,6 +2,20 @@
 
 All notable user-facing changes to ClipStow are documented here.
 
+## [0.1.0-beta.2] - 2026-08-22
+
+### Improved
+
+- Reduced typing latency by keeping editor drafts separate from persisted note state and debouncing commits.
+- Cached Markdown preview content and reduced unnecessary note-list recomputation.
+- Remembered the Edit or Preview selection across note changes, popover reopen, and app relaunch.
+- Isolated Scratchpad updates so they no longer refresh the Notes interface.
+- Stopped clipboard polling while Copy Capture is off.
+- Added bounded previews with Show More and Show Less for long Scratchpad entries while preserving their full original text.
+- Reduced repeated formatting, allocation, and row rendering work in Scratchpad.
+
+[0.1.0-beta.2]: https://github.com/parkcom/clipstow/releases/tag/v0.1.0-beta.2
+
 ## [0.1.0-beta.1] - 2026-08-19
 
 First public beta.

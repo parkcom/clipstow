@@ -7,13 +7,16 @@ struct NotesView: View {
     @State private var editingTitle = ""
 
     var body: some View {
+        let filteredNotes = store.filteredNotes
+        let noteCounts = store.noteCounts
+
         HSplitView {
             if store.isCategorySidebarVisible {
-                categorySidebar
+                categorySidebar(noteCounts: noteCounts)
                     .frame(minWidth: 160, idealWidth: 176, maxWidth: 210)
             }
 
-            noteListPane
+            noteListPane(filteredNotes: filteredNotes)
                 .frame(minWidth: 220, idealWidth: 248, maxWidth: 290)
 
             NoteEditorView(store: store)
@@ -24,7 +27,7 @@ struct NotesView: View {
         }
     }
 
-    private var categorySidebar: some View {
+    private func categorySidebar(noteCounts: NoteCountSummary) -> some View {
         VStack(spacing: 0) {
             HStack {
                 Text("카테고리")
@@ -71,7 +74,7 @@ struct NotesView: View {
                     CategorySidebarRow(
                         title: L10n.string("미분류"),
                         systemImage: "tray",
-                        count: store.notes.lazy.filter { $0.categoryID == nil }.count,
+                        count: noteCounts.uncategorized,
                         selected: store.noteFilter == .uncategorized
                     ) {
                         store.setFilter(.uncategorized)
@@ -93,7 +96,7 @@ struct NotesView: View {
                         CategorySidebarRow(
                             title: category.name,
                             systemImage: "folder",
-                            count: store.noteCount(in: category.id),
+                            count: noteCounts.byCategory[category.id, default: 0],
                             selected: store.noteFilter == .category(category.id)
                         ) {
                             store.setFilter(.category(category.id))
@@ -106,7 +109,7 @@ struct NotesView: View {
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.48))
     }
 
-    private var noteListPane: some View {
+    private func noteListPane(filteredNotes: [Note]) -> some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 if store.isCategorySidebarVisible {
@@ -114,7 +117,7 @@ struct NotesView: View {
                         Text(activeCategoryTitle)
                             .stashFont(15, weight: .semibold)
                             .lineLimit(1)
-                        Text(L10n.format("노트 %d개", store.filteredNotes.count))
+                        Text(L10n.format("노트 %d개", filteredNotes.count))
                             .stashFont(10)
                             .foregroundStyle(.secondary)
                     }
@@ -144,7 +147,7 @@ struct NotesView: View {
                     .frame(maxWidth: 150)
                     .help("카테고리 선택")
 
-                    Text(String(store.filteredNotes.count))
+                    Text(String(filteredNotes.count))
                         .stashFont(10, weight: .medium, design: .rounded)
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
@@ -169,14 +172,14 @@ struct NotesView: View {
 
             Divider()
 
-            noteList
+            noteList(filteredNotes)
         }
     }
 
-    private var noteList: some View {
+    private func noteList(_ filteredNotes: [Note]) -> some View {
         ScrollView {
             LazyVStack(spacing: 5) {
-                ForEach(store.filteredNotes) { note in
+                ForEach(filteredNotes) { note in
                     NoteListRow(
                         note: note,
                         selected: store.selectedNoteID == note.id,
@@ -192,7 +195,7 @@ struct NotesView: View {
             .padding(7)
         }
         .overlay {
-            if store.filteredNotes.isEmpty {
+            if filteredNotes.isEmpty {
                 VStack(spacing: 10) {
                     Image(systemName: "doc.text")
                         .stashFont(24, weight: .light)
@@ -306,7 +309,7 @@ private struct NoteListRow: View {
     @FocusState private var isTitleFocused: Bool
 
     private var excerpt: String {
-        let value = note.body
+        let value = String(note.body.prefix(280))
             .replacingOccurrences(of: "\n", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return value.isEmpty ? L10n.string("내용 없음") : value
