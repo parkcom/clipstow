@@ -403,6 +403,37 @@ final class AppStoreTests: XCTestCase {
         XCTAssertEqual(cache.parseCount, 2)
     }
 
+    func testMarkdownPreviewPreservesEditorLineBreaks() {
+        let markdown = """
+        First line
+        Second line
+
+        Third line
+        """
+
+        XCTAssertEqual(
+            MarkdownPreviewCache.preservingLineBreaks(in: markdown),
+            "First line  \nSecond line  \n\nThird line"
+        )
+    }
+
+    func testMarkdownPreviewDoesNotChangeExplicitBreaksOrFencedCode() {
+        let markdown = [
+            "Intro\\",
+            "Next  ",
+            "```swift",
+            "let first = 1",
+            "let second = 2",
+            "```",
+            "Outro",
+        ].joined(separator: "\n")
+
+        XCTAssertEqual(
+            MarkdownPreviewCache.preservingLineBreaks(in: markdown),
+            markdown
+        )
+    }
+
     func testMarkdownFixtureContainsAllRequiredSyntax() {
         let fixture = """
         # Heading

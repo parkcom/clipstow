@@ -18,8 +18,47 @@ final class MarkdownPreviewCache: ObservableObject {
     func prepare(markdown: String) {
         guard source != markdown else { return }
         source = markdown
-        content = MarkdownContent(markdown)
+        content = MarkdownContent(Self.preservingLineBreaks(in: markdown))
         parseCount += 1
+    }
+
+    static func preservingLineBreaks(in markdown: String) -> String {
+        let normalized = markdown
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        var lines = normalized.components(separatedBy: "\n")
+        var fencedCodeMarker: Character?
+
+        for index in lines.indices.dropLast() {
+            let line = lines[index]
+            let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+
+            if let marker = Self.fencedCodeMarker(in: trimmedLine) {
+                if fencedCodeMarker == marker {
+                    fencedCodeMarker = nil
+                } else if fencedCodeMarker == nil {
+                    fencedCodeMarker = marker
+                }
+                continue
+            }
+
+            guard fencedCodeMarker == nil,
+                  !trimmedLine.isEmpty,
+                  !line.hasSuffix("  "),
+                  !line.hasSuffix("\\") else {
+                continue
+            }
+            lines[index] += "  "
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
+    private static func fencedCodeMarker(in line: String) -> Character? {
+        guard let marker = line.first, marker == "`" || marker == "~" else {
+            return nil
+        }
+        return line.prefix { $0 == marker }.count >= 3 ? marker : nil
     }
 }
 
