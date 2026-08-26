@@ -9,6 +9,12 @@ struct FolderBrowserView: View {
 
     @State private var isChoosingFolder = false
     @State private var isConfirmingForget = false
+    @State private var isConfirmingTrash = false
+    @State private var trashCandidates: [FolderItem] = []
+    @State private var isRenamingItem = false
+    @State private var renameCandidate: FolderItem?
+    @State private var renameText = ""
+    @State private var infoItem: FolderItem?
     @State private var quickLookURL: URL?
 
     var body: some View {
@@ -50,6 +56,41 @@ struct FolderBrowserView: View {
         } message: {
             Text("ClipStow의 접근 권한만 지우며 폴더와 파일은 삭제하지 않습니다.")
         }
+        .alert(
+            "휴지통으로 이동할까요?",
+            isPresented: $isConfirmingTrash
+        ) {
+            Button("휴지통으로 이동", role: .destructive) {
+                quickLookURL = nil
+                state.moveToTrash(trashCandidates)
+                trashCandidates = []
+            }
+            Button("취소", role: .cancel) {
+                trashCandidates = []
+            }
+        } message: {
+            Text(trashConfirmationMessage)
+        }
+        .alert(
+            "이름 변경",
+            isPresented: $isRenamingItem
+        ) {
+            TextField("새 이름", text: $renameText)
+            Button("이름 변경") {
+                if let renameCandidate {
+                    state.rename(renameCandidate, to: renameText)
+                }
+                self.renameCandidate = nil
+            }
+            Button("취소", role: .cancel) {
+                renameCandidate = nil
+            }
+        } message: {
+            Text("파일 또는 폴더의 새 이름을 입력하세요.")
+        }
+        .sheet(item: $infoItem) { item in
+            FolderItemInfoView(item: item)
+        }
         .onAppear {
             state.reload()
         }
@@ -88,6 +129,17 @@ struct FolderBrowserView: View {
                 }
                 .buttonStyle(.plain)
                 .help("새로 고침")
+
+                Button {
+                    state.selectAll()
+                } label: {
+                    Image(systemName: "checkmark.circle")
+                        .frame(width: 26, height: 26)
+                }
+                .buttonStyle(.plain)
+                .disabled(state.items.isEmpty)
+                .keyboardShortcut("a", modifiers: .command)
+                .help("모두 선택 (⌘A)")
 
                 Button {
                     isConfirmingForget = true
@@ -201,8 +253,15 @@ struct FolderBrowserView: View {
                         ForEach(state.items) { item in
                             FolderItemRow(
                                 item: item,
-                                isSelected: state.selectedItemID == item.id,
-                                onSelect: { state.select(item) },
+                                isSelected: state.isSelected(item),
+                                selectedItemCount: state.selectionCount,
+                                onSelect: {
+                                    if NSEvent.modifierFlags.contains(.command) {
+                                        state.toggleSelection(of: item)
+                                    } else {
+                                        state.select(item)
+                                    }
+                                },
                                 onOpen: {
                                     if item.isDirectory {
                                         state.open(item)
@@ -210,6 +269,49 @@ struct FolderBrowserView: View {
                                         state.select(item)
                                         quickLookURL = item.url
                                     }
+                                },
+                                onContextOpen: {
+                                    openContextItems(for: item)
+                                },
+                                onOpenWith: { applicationURL in
+                                    state.select(item)
+                                    let configuration = NSWorkspace.OpenConfiguration()
+                                    configuration.activates = true
+                                    NSWorkspace.shared.open(
+                                        [item.url],
+                                        withApplicationAt: applicationURL,
+                                        configuration: configuration,
+                                        completionHandler: nil
+                                    )
+                                },
+                                onQuickLook: {
+                                    if !state.isSelected(item) {
+                                        state.select(item)
+                                    }
+                                    quickLookURL = item.url
+                                },
+                                onRevealInFinder: {
+                                    let items = contextItems(for: item)
+                                    NSWorkspace.shared.activateFileViewerSelecting(items.map(\.url))
+                                },
+                                onRename: {
+                                    state.select(item)
+                                    renameCandidate = item
+                                    renameText = item.name
+                                    isRenamingItem = true
+                                },
+                                onDuplicate: {
+                                    state.duplicate(contextItems(for: item))
+                                },
+                                onCopy: {
+                                    copyToPasteboard(contextItems(for: item))
+                                },
+                                onGetInfo: {
+                                    state.select(item)
+                                    infoItem = item
+                                },
+                                onRequestTrash: {
+                                    requestTrash(contextItems(for: item))
                                 }
                             )
                         }
@@ -222,7 +324,19 @@ struct FolderBrowserView: View {
 
     @ViewBuilder
     private var previewPane: some View {
-        if let item = state.selectedItem {
+        if state.selectionCount > 1 {
+            VStack(spacing: 9) {
+                Image(systemName: "doc.on.doc")
+                    .stashFont(34, weight: .light)
+                    .foregroundStyle(.secondary)
+                Text(L10n.format("%d개 항목 선택됨", state.selectionCount))
+                    .stashFont(12, weight: .medium)
+                Text("오른쪽 클릭하여 선택한 항목에 작업을 수행할 수 있습니다.")
+                    .stashFont(10)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let item = state.selectedItem {
             VStack(spacing: 0) {
                 HStack(spacing: 10) {
                     FolderItemIcon(item: item, size: 30)
@@ -312,6 +426,52 @@ struct FolderBrowserView: View {
         .frame(minHeight: 32)
         .background(Color.orange.opacity(0.08))
     }
+
+    private var trashConfirmationMessage: String {
+        if trashCandidates.count == 1, let item = trashCandidates.first {
+            return L10n.format(
+                "‘%@’ 항목을 macOS 휴지통으로 이동합니다. Finder에서 복구할 수 있습니다.",
+                item.name
+            )
+        }
+        guard !trashCandidates.isEmpty else { return "" }
+        return L10n.format(
+            "%d개 항목을 macOS 휴지통으로 이동합니다. Finder에서 복구할 수 있습니다.",
+            trashCandidates.count
+        )
+    }
+
+    private func requestTrash(_ items: [FolderItem]) {
+        guard !items.isEmpty else { return }
+        trashCandidates = items
+        isConfirmingTrash = true
+    }
+
+    private func contextItems(for item: FolderItem) -> [FolderItem] {
+        if state.isSelected(item), !state.selectedItems.isEmpty {
+            return state.selectedItems
+        }
+        state.select(item)
+        return [item]
+    }
+
+    private func openContextItems(for item: FolderItem) {
+        let items = contextItems(for: item)
+        if items.count == 1, let item = items.first, item.isDirectory {
+            state.open(item)
+            return
+        }
+        for item in items {
+            NSWorkspace.shared.open(item.url)
+        }
+    }
+
+    private func copyToPasteboard(_ items: [FolderItem]) {
+        guard !items.isEmpty else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.writeObjects(items.map { $0.url as NSURL })
+    }
 }
 
 private struct FolderSortHeader: View {
@@ -354,8 +514,58 @@ private struct FolderSortHeader: View {
 private struct FolderItemRow: View {
     let item: FolderItem
     let isSelected: Bool
+    let selectedItemCount: Int
     let onSelect: () -> Void
     let onOpen: () -> Void
+    let onContextOpen: () -> Void
+    let onOpenWith: (URL) -> Void
+    let onQuickLook: () -> Void
+    let onRevealInFinder: () -> Void
+    let onRename: () -> Void
+    let onDuplicate: () -> Void
+    let onCopy: () -> Void
+    let onGetInfo: () -> Void
+    let onRequestTrash: () -> Void
+
+    private var contextItemCount: Int {
+        isSelected ? max(selectedItemCount, 1) : 1
+    }
+
+    private var openMenuTitle: String {
+        contextItemCount == 1
+            ? L10n.string("열기")
+            : L10n.format("%d개 항목 열기", contextItemCount)
+    }
+
+    private var duplicateMenuTitle: String {
+        contextItemCount == 1
+            ? L10n.string("복제")
+            : L10n.format("%d개 항목 복제", contextItemCount)
+    }
+
+    private var copyMenuTitle: String {
+        contextItemCount == 1
+            ? L10n.string("복사")
+            : L10n.format("%d개 항목 복사", contextItemCount)
+    }
+
+    private var trashMenuTitle: String {
+        guard contextItemCount > 1 else {
+            return L10n.string("휴지통으로 이동")
+        }
+        return L10n.format("%d개 항목을 휴지통으로 이동", contextItemCount)
+    }
+
+    private var openWithApplications: [URL] {
+        var seenPaths: Set<String> = []
+        return NSWorkspace.shared.urlsForApplications(toOpen: item.url)
+            .filter { seenPaths.insert($0.standardizedFileURL.path).inserted }
+            .sorted {
+                FileManager.default.displayName(atPath: $0.path)
+                    .localizedStandardCompare(FileManager.default.displayName(atPath: $1.path))
+                    == .orderedAscending
+            }
+    }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -388,10 +598,130 @@ private struct FolderItemRow: View {
         .onTapGesture(count: 2, perform: onOpen)
         .onTapGesture(count: 1, perform: onSelect)
         .fileDragSource(item.isDirectory ? nil : item.url, onBegan: onSelect)
+        .contextMenu {
+            Button(action: onContextOpen) {
+                Label(openMenuTitle, systemImage: "arrow.up.forward.app")
+            }
+
+            if contextItemCount == 1, !item.isDirectory, !openWithApplications.isEmpty {
+                Menu {
+                    ForEach(openWithApplications, id: \.path) { applicationURL in
+                        Button {
+                            onOpenWith(applicationURL)
+                        } label: {
+                            Label {
+                                Text(FileManager.default.displayName(atPath: applicationURL.path))
+                            } icon: {
+                                Image(nsImage: NSWorkspace.shared.icon(forFile: applicationURL.path))
+                            }
+                        }
+                    }
+                } label: {
+                    Label("다음으로 열기", systemImage: "square.and.arrow.up")
+                }
+            }
+
+            Divider()
+
+            Button(action: onQuickLook) {
+                Label("빠른 보기", systemImage: "eye")
+            }
+
+            Button(action: onRevealInFinder) {
+                Label("Finder에서 보기", systemImage: "folder")
+            }
+
+            Divider()
+
+            Button(action: onRename) {
+                Label("이름 변경", systemImage: "pencil")
+            }
+            .disabled(contextItemCount != 1)
+
+            Button(action: onDuplicate) {
+                Label(duplicateMenuTitle, systemImage: "plus.square.on.square")
+            }
+
+            Button(action: onCopy) {
+                Label(copyMenuTitle, systemImage: "doc.on.doc")
+            }
+
+            Divider()
+
+            Button(action: onGetInfo) {
+                Label("정보 가져오기", systemImage: "info.circle")
+            }
+            .disabled(contextItemCount != 1)
+
+            Divider()
+
+            Button(role: .destructive, action: onRequestTrash) {
+                Label {
+                    Text(trashMenuTitle)
+                } icon: {
+                    Image(systemName: "trash")
+                }
+            }
+        }
         .accessibilityLabel(item.name)
         .accessibilityHint(item.isDirectory
             ? L10n.string("더블클릭하여 폴더 열기")
             : L10n.string("드래그하여 다른 앱에 파일 첨부"))
+    }
+}
+
+private struct FolderItemInfoView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let item: FolderItem
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                FolderItemIcon(item: item, size: 48)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(item.name)
+                        .stashFont(15, weight: .semibold)
+                        .lineLimit(2)
+                    Text(item.isDirectory ? L10n.string("폴더") : FileMetadataFormatter.kind(for: item.url))
+                        .stashFont(11)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Divider()
+
+            Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 9) {
+                infoRow("종류", value: item.isDirectory
+                    ? L10n.string("폴더")
+                    : FileMetadataFormatter.kind(for: item.url))
+                infoRow("크기", value: FileMetadataFormatter.size(item.byteCount))
+                infoRow("수정일", value: FileMetadataFormatter.modifiedDate(item.modifiedAt))
+                infoRow("위치", value: item.url.deletingLastPathComponent().path)
+            }
+
+            HStack {
+                Spacer()
+                Button("닫기") {
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 440)
+    }
+
+    @ViewBuilder
+    private func infoRow(_ label: LocalizedStringKey, value: String) -> some View {
+        GridRow {
+            Text(label)
+                .stashFont(11, weight: .medium)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .stashFont(11)
+                .textSelection(.enabled)
+        }
     }
 }
 

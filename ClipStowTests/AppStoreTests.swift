@@ -629,6 +629,188 @@ final class AppStoreTests: XCTestCase {
         state.forgetFolder()
     }
 
+    func testFolderBrowserSelectsAllAndMovesSelectionToTrash() {
+        let rootURL = URL(fileURLWithPath: "/tmp/ClipStowFolderTrashTests", isDirectory: true)
+        let folder = FolderItem(
+            url: rootURL.appendingPathComponent("Folder", isDirectory: true),
+            isDirectory: true,
+            byteCount: nil,
+            modifiedAt: nil
+        )
+        let alpha = FolderItem(
+            url: rootURL.appendingPathComponent("Alpha.txt"),
+            isDirectory: false,
+            byteCount: 10,
+            modifiedAt: nil
+        )
+        let bravo = FolderItem(
+            url: rootURL.appendingPathComponent("Bravo.txt"),
+            isDirectory: false,
+            byteCount: 20,
+            modifiedAt: nil
+        )
+        let trasher = FakeFolderItemTrasher()
+        let state = FolderBrowserState(
+            userDefaults: defaults,
+            contentsLoader: StubFolderContentsLoader(items: [bravo, folder, alpha]),
+            accessManager: FakeSecurityScopedFolderAccessManager(),
+            itemTrasher: trasher
+        )
+
+        XCTAssertTrue(state.selectFolder(rootURL))
+        state.selectAll()
+
+        XCTAssertEqual(state.selectionCount, 3)
+        XCTAssertNil(state.selectedItem)
+        XCTAssertTrue(state.moveToTrash(state.selectedItems))
+        XCTAssertEqual(trasher.requestedURLs, [folder.url, alpha.url, bravo.url])
+        XCTAssertTrue(state.items.isEmpty)
+        XCTAssertEqual(state.selectionCount, 0)
+        XCTAssertNil(state.accessError)
+
+        state.forgetFolder()
+    }
+
+    func testFolderBrowserKeepsTrashFailuresSelectedAfterPartialSuccess() {
+        let rootURL = URL(fileURLWithPath: "/tmp/ClipStowFolderTrashFailureTests", isDirectory: true)
+        let alpha = FolderItem(
+            url: rootURL.appendingPathComponent("Alpha.txt"),
+            isDirectory: false,
+            byteCount: 10,
+            modifiedAt: nil
+        )
+        let bravo = FolderItem(
+            url: rootURL.appendingPathComponent("Bravo.txt"),
+            isDirectory: false,
+            byteCount: 20,
+            modifiedAt: nil
+        )
+        let trasher = FakeFolderItemTrasher(failingURLs: [bravo.url])
+        let state = FolderBrowserState(
+            userDefaults: defaults,
+            contentsLoader: StubFolderContentsLoader(items: [alpha, bravo]),
+            accessManager: FakeSecurityScopedFolderAccessManager(),
+            itemTrasher: trasher
+        )
+
+        XCTAssertTrue(state.selectFolder(rootURL))
+        state.selectAll()
+
+        XCTAssertFalse(state.moveToTrash(state.selectedItems))
+        XCTAssertEqual(trasher.requestedURLs, [alpha.url, bravo.url])
+        XCTAssertEqual(state.items, [bravo])
+        XCTAssertEqual(state.selectedItems, [bravo])
+        XCTAssertEqual(state.selectedItem, bravo)
+        XCTAssertNotNil(state.accessError)
+
+        state.forgetFolder()
+    }
+
+    func testFolderBrowserAutomaticallyReloadsAfterMonitoredFolderChange() {
+        let rootURL = URL(fileURLWithPath: "/tmp/ClipStowFolderMonitorTests", isDirectory: true)
+        let alpha = FolderItem(
+            url: rootURL.appendingPathComponent("Alpha.txt"),
+            isDirectory: false,
+            byteCount: 10,
+            modifiedAt: nil
+        )
+        let bravo = FolderItem(
+            url: rootURL.appendingPathComponent("Bravo.txt"),
+            isDirectory: false,
+            byteCount: 20,
+            modifiedAt: nil
+        )
+        let loader = MutableFolderContentsLoader(items: [alpha])
+        let monitor = FakeFolderChangeMonitor()
+        let state = FolderBrowserState(
+            userDefaults: defaults,
+            contentsLoader: loader,
+            accessManager: FakeSecurityScopedFolderAccessManager(),
+            changeMonitor: monitor,
+            autoReloadDelay: 0
+        )
+
+        XCTAssertTrue(state.selectFolder(rootURL))
+        XCTAssertEqual(monitor.monitoredURLs, [rootURL.standardizedFileURL])
+        XCTAssertEqual(state.items, [alpha])
+
+        state.select(alpha)
+        loader.items = [bravo]
+        monitor.sendChange()
+
+        XCTAssertEqual(state.items, [bravo])
+        XCTAssertEqual(loader.requestedURLs.count, 2)
+        XCTAssertEqual(state.selectionCount, 0)
+
+        state.forgetFolder()
+        XCTAssertFalse(monitor.isMonitoring)
+    }
+
+    func testFolderBrowserDuplicatesAndRenamesItems() throws {
+        let rootURL = URL(fileURLWithPath: "/tmp/ClipStowFolderFileActionTests", isDirectory: true)
+        let alpha = FolderItem(
+            url: rootURL.appendingPathComponent("Alpha.txt"),
+            isDirectory: false,
+            byteCount: 10,
+            modifiedAt: Date(timeIntervalSince1970: 100)
+        )
+        let firstCopyName = L10n.format("%@ 복사본%@", "Alpha", ".txt")
+        let firstCopyURL = rootURL.appendingPathComponent(firstCopyName)
+        let loader = MutableFolderContentsLoader(items: [alpha])
+        let fileManager = FakeFolderItemFileManager(existingURLs: [alpha.url, firstCopyURL])
+        fileManager.onCopy = { sourceURL, destinationURL in
+            let source = try XCTUnwrap(loader.items.first { $0.url == sourceURL })
+            loader.items.append(
+                FolderItem(
+                    url: destinationURL,
+                    isDirectory: source.isDirectory,
+                    byteCount: source.byteCount,
+                    modifiedAt: source.modifiedAt
+                )
+            )
+        }
+        fileManager.onMove = { sourceURL, destinationURL in
+            let source = try XCTUnwrap(loader.items.first { $0.url == sourceURL })
+            loader.items.removeAll { $0.url == sourceURL }
+            loader.items.append(
+                FolderItem(
+                    url: destinationURL,
+                    isDirectory: source.isDirectory,
+                    byteCount: source.byteCount,
+                    modifiedAt: source.modifiedAt
+                )
+            )
+        }
+        let state = FolderBrowserState(
+            userDefaults: defaults,
+            contentsLoader: loader,
+            accessManager: FakeSecurityScopedFolderAccessManager(),
+            itemFileManager: fileManager,
+            changeMonitor: FakeFolderChangeMonitor()
+        )
+
+        XCTAssertTrue(state.selectFolder(rootURL))
+        XCTAssertTrue(state.duplicate([alpha]))
+
+        let secondCopyName = L10n.format("%@ 복사본 %d%@", "Alpha", 2, ".txt")
+        let duplicatedURL = rootURL.appendingPathComponent(secondCopyName).standardizedFileURL
+        XCTAssertEqual(fileManager.copyRequests.count, 1)
+        XCTAssertEqual(fileManager.copyRequests.first?.source, alpha.url.standardizedFileURL)
+        XCTAssertEqual(fileManager.copyRequests.first?.destination, duplicatedURL)
+        let duplicatedItem = try XCTUnwrap(state.selectedItem)
+        XCTAssertEqual(duplicatedItem.url, duplicatedURL)
+
+        XCTAssertTrue(state.rename(duplicatedItem, to: "Renamed.txt"))
+
+        let renamedURL = rootURL.appendingPathComponent("Renamed.txt").standardizedFileURL
+        XCTAssertEqual(fileManager.moveRequests.count, 1)
+        XCTAssertEqual(fileManager.moveRequests.first?.source, duplicatedURL)
+        XCTAssertEqual(fileManager.moveRequests.first?.destination, renamedURL)
+        XCTAssertEqual(state.selectedItem?.url, renamedURL)
+
+        state.forgetFolder()
+    }
+
     func testFolderBrowserRestoresPersistedSecurityScopedBookmark() throws {
         let fileManager = FileManager.default
         let rootURL = fileManager.temporaryDirectory
@@ -727,6 +909,7 @@ final class AppStoreTests: XCTestCase {
 
 enum TestError: Error {
     case saveFailed
+    case trashFailed
 }
 
 final class InMemoryNoteRepository: NoteRepository {
@@ -811,5 +994,96 @@ struct StubFolderContentsLoader: FolderContentsLoading {
 
     func contents(of directoryURL: URL) throws -> [FolderItem] {
         items
+    }
+}
+
+final class MutableFolderContentsLoader: FolderContentsLoading {
+    var items: [FolderItem]
+    private(set) var requestedURLs: [URL] = []
+
+    init(items: [FolderItem]) {
+        self.items = items
+    }
+
+    func contents(of directoryURL: URL) throws -> [FolderItem] {
+        requestedURLs.append(directoryURL.standardizedFileURL)
+        return items
+    }
+}
+
+final class FakeFolderChangeMonitor: FolderChangeMonitoring {
+    private var onChange: (() -> Void)?
+    private(set) var monitoredURLs: [URL] = []
+
+    var isMonitoring: Bool {
+        onChange != nil
+    }
+
+    func startMonitoring(_ url: URL, onChange: @escaping () -> Void) {
+        monitoredURLs.append(url.standardizedFileURL)
+        self.onChange = onChange
+    }
+
+    func stopMonitoring() {
+        onChange = nil
+    }
+
+    func sendChange() {
+        onChange?()
+    }
+}
+
+final class FakeFolderItemFileManager: FolderItemFileManaging {
+    struct Request {
+        let source: URL
+        let destination: URL
+    }
+
+    var onMove: ((URL, URL) throws -> Void)?
+    var onCopy: ((URL, URL) throws -> Void)?
+    private(set) var moveRequests: [Request] = []
+    private(set) var copyRequests: [Request] = []
+    private var existingURLs: Set<URL>
+
+    init(existingURLs: Set<URL> = []) {
+        self.existingURLs = Set(existingURLs.map(\.standardizedFileURL))
+    }
+
+    func moveItem(at sourceURL: URL, to destinationURL: URL) throws {
+        let sourceURL = sourceURL.standardizedFileURL
+        let destinationURL = destinationURL.standardizedFileURL
+        moveRequests.append(Request(source: sourceURL, destination: destinationURL))
+        try onMove?(sourceURL, destinationURL)
+        existingURLs.remove(sourceURL)
+        existingURLs.insert(destinationURL)
+    }
+
+    func copyItem(at sourceURL: URL, to destinationURL: URL) throws {
+        let sourceURL = sourceURL.standardizedFileURL
+        let destinationURL = destinationURL.standardizedFileURL
+        copyRequests.append(Request(source: sourceURL, destination: destinationURL))
+        try onCopy?(sourceURL, destinationURL)
+        existingURLs.insert(destinationURL)
+    }
+
+    func itemExists(at url: URL) -> Bool {
+        existingURLs.contains(url.standardizedFileURL)
+    }
+}
+
+final class FakeFolderItemTrasher: FolderItemTrashing {
+    let failingURLs: Set<URL>
+    private(set) var requestedURLs: [URL] = []
+
+    init(failingURLs: Set<URL> = []) {
+        self.failingURLs = Set(failingURLs.map(\.standardizedFileURL))
+    }
+
+    func moveToTrash(_ url: URL) throws {
+        let standardizedURL = url.standardizedFileURL
+        requestedURLs.append(standardizedURL)
+        if failingURLs.contains(standardizedURL) {
+            throw TestError.trashFailed
+        }
     }
 }

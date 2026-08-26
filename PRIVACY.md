@@ -10,11 +10,11 @@ ClipStow is designed as a local-only application.
 
 ## Folder access
 
-Folder browsing is optional. ClipStow receives read-only access only after the user selects a folder with the macOS folder picker.
+Folder browsing is optional. ClipStow receives read and write access only after the user selects a folder with the macOS folder picker.
 
 - Access is limited to the selected folder and its contents.
 - ClipStow reads names and metadata to build the file list and reads a selected file only for Quick Look preview or a user-initiated drag to another app.
-- ClipStow does not modify, move, delete, copy into its own storage, upload, or index files in the selected folder.
+- Write access is used only when the user explicitly chooses **Rename**, **Duplicate**, or confirms **Move to Trash** for selected files or folders. ClipStow does not permanently delete, edit file contents, upload, index, or copy those items into its own storage.
 - A security-scoped bookmark restores the selected folder after relaunch. The user can remove that bookmark with **Disconnect Folder** without deleting any files.
 
 ## Clipboard access
@@ -33,4 +33,4 @@ ClipStow does not include accounts, advertising, analytics, telemetry, crash-rep
 
 ## Deletion
 
-Users can delete individual notes, Scratchpad items, or categories. Deleting a category also deletes all notes inside it after confirmation. Deleted content is not recoverable from within ClipStow. Disconnecting a selected folder only removes ClipStow's saved access and never deletes the folder or its files.
+Users can delete individual notes, Scratchpad items, or categories. Deleting a category also deletes all notes inside it after confirmation. Deleted note content is not recoverable from within ClipStow. Selected folder items can be moved to the macOS Trash only after confirmation and can be recovered through Finder while they remain in the Trash. Disconnecting a selected folder only removes ClipStow's saved access and never deletes the folder or its files.

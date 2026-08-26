@@ -21,7 +21,7 @@ ClipStow is a native macOS menu bar app for quickly capturing Markdown notes and
 - Edit Markdown and preview headings, emphasis, lists, task lists, code, and links.
 - Collect copied text in an in-memory Scratchpad without intercepting `⌘C`.
 - Turn one or all Scratchpad items into persistent notes.
-- Browse a user-selected folder, sort files by name, modified date, or size, preview them with Quick Look, and drag them into other apps as attachments.
+- Browse a user-selected folder with automatic file-list refresh, sorting, `Command+A` selection, Quick Look, Finder-style file actions, confirmed moves to the macOS Trash, and drag-to-attach.
 - Resize or pin the popover and adjust UI, note, and Scratchpad font sizes.
 - Launch at login and switch the interface between English, Korean, and Japanese.
 - Prevent multiple app instances from running simultaneously.
@@ -76,7 +76,7 @@ Swift Package Manager dependencies are locked in `Package.resolved`:
 4. Use **Edit** for Markdown source and **Preview** for rendered output.
 5. Open **Scratchpad**, enable **Copy Capture**, and copy text in another app.
 6. Copy individual items to notes, or save all items as one note.
-7. Open **Folder**, select a folder, and click a column header to sort in either direction. Select or double-click files to preview them, or drag a file row into another app to attach it.
+7. Open **Folder** and select a folder. The list refreshes automatically when its contents change. Click a column header to sort, Command-click to build a selection, or press `Command+A` to select everything. Right-click for **Open**, **Open With**, **Quick Look**, **Show in Finder**, **Rename**, **Duplicate**, **Copy**, **Get Info**, and confirmed **Move to Trash** actions. Select or double-click a file to preview it, or drag a file row into another app to attach it.
 
 Settings include the app language, global shortcut, launch at login, popover pinning, and font sizes. If a shortcut conflicts with another app or a system shortcut, ClipStow shows a warning; the menu bar icon remains available.
 
@@ -88,7 +88,7 @@ Persistent notes are atomically written to `ClipStow/store.json` under the app s
 ~/Library/Containers/com.parkcom.clipstow/Data/Library/Application Support/ClipStow/store.json
 ```
 
-Scratchpad text is not written to disk. Folder access is read-only and limited to the folder the user selects; a security-scoped bookmark is stored so access can be restored after relaunch. ClipStow has no accounts, analytics, telemetry, cloud sync, or application-level network requests. See [PRIVACY.md](PRIVACY.md) for details.
+Scratchpad text is not written to disk. Folder access is limited to the folder the user selects; write access is used only for explicit Rename, Duplicate, or confirmed Move to Trash actions. A security-scoped bookmark is stored so access can be restored after relaunch. ClipStow has no accounts, analytics, telemetry, cloud sync, or application-level network requests. See [PRIVACY.md](PRIVACY.md) for details.
 
 Copy Capture checks `NSPasteboard.changeCount` every 250 ms and only reads text after it changes. It does not monitor keyboard events or replace the normal copy operation. macOS may ask for Pasteboard access; if access is denied, enable it again in System Settings.
 

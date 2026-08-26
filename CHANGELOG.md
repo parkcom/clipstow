@@ -6,8 +6,9 @@ All notable user-facing changes to ClipStow are documented here.
 
 ### Added
 
-- Added a Folder section alongside Notes and Scratchpad with read-only, user-selected folder access.
-- Added Finder-style folder navigation, ascending/descending sorting by name, modified date, or size, file metadata, inline and full Quick Look previews, and file dragging into other apps.
+- Added a Folder section alongside Notes and Scratchpad with user-selected folder access.
+- Added Finder-style folder navigation, automatic file-list refresh, ascending/descending sorting by name, modified date, or size, file metadata, inline and full Quick Look previews, and file dragging into other apps.
+- Added Command-click multi-selection, `Command+A` Select All, and Finder-style context-menu actions for opening, Quick Look, revealing, renaming, duplicating, copying, getting info, and confirmed moves to the macOS Trash.
 - Restored selected-folder access across launches with a removable security-scoped bookmark.
 
 ## [0.1.0-beta.2] - 2026-08-22

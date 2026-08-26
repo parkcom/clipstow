@@ -1,3 +1,4 @@
+import CoreServices
 import Foundation
 
 struct FolderItem: Identifiable, Equatable {
@@ -111,6 +112,122 @@ struct FileManagerFolderContentsLoader: FolderContentsLoading {
     }
 }
 
+protocol FolderChangeMonitoring: AnyObject {
+    func startMonitoring(_ url: URL, onChange: @escaping () -> Void)
+    func stopMonitoring()
+}
+
+final class FSEventsFolderChangeMonitor: FolderChangeMonitoring {
+    private var stream: FSEventStreamRef?
+    private var onChange: (() -> Void)?
+
+    deinit {
+        stopMonitoring()
+    }
+
+    func startMonitoring(_ url: URL, onChange: @escaping () -> Void) {
+        stopMonitoring()
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else {
+            return
+        }
+        self.onChange = onChange
+
+        var context = FSEventStreamContext(
+            version: 0,
+            info: Unmanaged.passUnretained(self).toOpaque(),
+            retain: nil,
+            release: nil,
+            copyDescription: nil
+        )
+        let callback: FSEventStreamCallback = { _, info, _, _, _, _ in
+            guard let info else { return }
+            let monitor = Unmanaged<FSEventsFolderChangeMonitor>
+                .fromOpaque(info)
+                .takeUnretainedValue()
+            monitor.onChange?()
+        }
+        let flags = FSEventStreamCreateFlags(
+            kFSEventStreamCreateFlagFileEvents
+                | kFSEventStreamCreateFlagNoDefer
+                | kFSEventStreamCreateFlagWatchRoot
+        )
+        guard let nextStream = FSEventStreamCreate(
+            nil,
+            callback,
+            &context,
+            [url.standardizedFileURL.path] as CFArray,
+            FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
+            0.2,
+            flags
+        ) else {
+            self.onChange = nil
+            return
+        }
+
+        FSEventStreamSetDispatchQueue(nextStream, .main)
+        guard FSEventStreamStart(nextStream) else {
+            FSEventStreamInvalidate(nextStream)
+            FSEventStreamRelease(nextStream)
+            self.onChange = nil
+            return
+        }
+        stream = nextStream
+    }
+
+    func stopMonitoring() {
+        onChange = nil
+        guard let stream else { return }
+        FSEventStreamStop(stream)
+        FSEventStreamInvalidate(stream)
+        FSEventStreamRelease(stream)
+        self.stream = nil
+    }
+}
+
+protocol FolderItemFileManaging {
+    func moveItem(at sourceURL: URL, to destinationURL: URL) throws
+    func copyItem(at sourceURL: URL, to destinationURL: URL) throws
+    func itemExists(at url: URL) -> Bool
+}
+
+struct FileManagerFolderItemFileManager: FolderItemFileManaging {
+    private let fileManager: FileManager
+
+    init(fileManager: FileManager = .default) {
+        self.fileManager = fileManager
+    }
+
+    func moveItem(at sourceURL: URL, to destinationURL: URL) throws {
+        try fileManager.moveItem(at: sourceURL, to: destinationURL)
+    }
+
+    func copyItem(at sourceURL: URL, to destinationURL: URL) throws {
+        try fileManager.copyItem(at: sourceURL, to: destinationURL)
+    }
+
+    func itemExists(at url: URL) -> Bool {
+        fileManager.fileExists(atPath: url.path)
+    }
+}
+
+protocol FolderItemTrashing {
+    func moveToTrash(_ url: URL) throws
+}
+
+struct FileManagerFolderItemTrasher: FolderItemTrashing {
+    private let fileManager: FileManager
+
+    init(fileManager: FileManager = .default) {
+        self.fileManager = fileManager
+    }
+
+    func moveToTrash(_ url: URL) throws {
+        try fileManager.trashItem(at: url, resultingItemURL: nil)
+    }
+}
+
 protocol SecurityScopedFolderAccessManaging {
     func startAccessing(_ url: URL) -> Bool
     func stopAccessing(_ url: URL)
@@ -154,6 +271,7 @@ final class FolderBrowserState: ObservableObject {
     @Published private(set) var currentURL: URL?
     @Published private(set) var items: [FolderItem] = []
     @Published private(set) var selectedItemID: String?
+    @Published private(set) var selectedItemIDs: Set<String> = []
     @Published private(set) var accessError: String?
     @Published private(set) var sortColumn: FolderSortColumn = .name
     @Published private(set) var sortDirection: FolderSortDirection = .ascending
@@ -161,20 +279,35 @@ final class FolderBrowserState: ObservableObject {
     private let userDefaults: UserDefaults
     private let contentsLoader: FolderContentsLoading
     private let accessManager: SecurityScopedFolderAccessManaging
+    private let itemTrasher: FolderItemTrashing
+    private let itemFileManager: FolderItemFileManaging
+    private let changeMonitor: FolderChangeMonitoring
+    private let autoReloadDelay: TimeInterval
     private var scopedRootURL: URL?
+    private var autoReloadWorkItem: DispatchWorkItem?
 
     init(
         userDefaults: UserDefaults = .standard,
         contentsLoader: FolderContentsLoading = FileManagerFolderContentsLoader(),
-        accessManager: SecurityScopedFolderAccessManaging = SecurityScopedFolderAccessManager()
+        accessManager: SecurityScopedFolderAccessManaging = SecurityScopedFolderAccessManager(),
+        itemTrasher: FolderItemTrashing = FileManagerFolderItemTrasher(),
+        itemFileManager: FolderItemFileManaging = FileManagerFolderItemFileManager(),
+        changeMonitor: FolderChangeMonitoring = FSEventsFolderChangeMonitor(),
+        autoReloadDelay: TimeInterval = 0.2
     ) {
         self.userDefaults = userDefaults
         self.contentsLoader = contentsLoader
         self.accessManager = accessManager
+        self.itemTrasher = itemTrasher
+        self.itemFileManager = itemFileManager
+        self.changeMonitor = changeMonitor
+        self.autoReloadDelay = autoReloadDelay
         restoreFolder()
     }
 
     deinit {
+        autoReloadWorkItem?.cancel()
+        changeMonitor.stopMonitoring()
         if let scopedRootURL {
             accessManager.stopAccessing(scopedRootURL)
         }
@@ -183,6 +316,14 @@ final class FolderBrowserState: ObservableObject {
     var selectedItem: FolderItem? {
         guard let selectedItemID else { return nil }
         return items.first { $0.id == selectedItemID }
+    }
+
+    var selectedItems: [FolderItem] {
+        items.filter { selectedItemIDs.contains($0.id) }
+    }
+
+    var selectionCount: Int {
+        selectedItemIDs.count
     }
 
     var isAtRoot: Bool {
@@ -228,6 +369,9 @@ final class FolderBrowserState: ObservableObject {
     }
 
     func forgetFolder() {
+        autoReloadWorkItem?.cancel()
+        autoReloadWorkItem = nil
+        changeMonitor.stopMonitoring()
         if let scopedRootURL {
             accessManager.stopAccessing(scopedRootURL)
         }
@@ -236,12 +380,172 @@ final class FolderBrowserState: ObservableObject {
         currentURL = nil
         items = []
         selectedItemID = nil
+        selectedItemIDs = []
         accessError = nil
         userDefaults.removeObject(forKey: Self.bookmarkDefaultsKey)
     }
 
     func select(_ item: FolderItem) {
         selectedItemID = item.id
+        selectedItemIDs = [item.id]
+    }
+
+    func toggleSelection(of item: FolderItem) {
+        guard items.contains(where: { $0.id == item.id }) else { return }
+        if selectedItemIDs.contains(item.id) {
+            selectedItemIDs.remove(item.id)
+        } else {
+            selectedItemIDs.insert(item.id)
+        }
+        updatePrimarySelection()
+    }
+
+    func selectAll() {
+        selectedItemIDs = Set(items.map(\.id))
+        updatePrimarySelection()
+    }
+
+    func isSelected(_ item: FolderItem) -> Bool {
+        selectedItemIDs.contains(item.id)
+    }
+
+    @discardableResult
+    func moveToTrash(_ requestedItems: [FolderItem]) -> Bool {
+        let availableIDs = Set(items.map(\.id))
+        var seenIDs: Set<String> = []
+        let candidates = requestedItems.filter { item in
+            availableIDs.contains(item.id) && seenIDs.insert(item.id).inserted
+        }
+        guard !candidates.isEmpty else { return false }
+
+        var movedIDs: Set<String> = []
+        var failures: [(item: FolderItem, error: Error)] = []
+        for item in candidates {
+            do {
+                try itemTrasher.moveToTrash(item.url)
+                movedIDs.insert(item.id)
+            } catch {
+                failures.append((item, error))
+            }
+        }
+
+        if !movedIDs.isEmpty {
+            items.removeAll { movedIDs.contains($0.id) }
+            selectedItemIDs.subtract(movedIDs)
+            updatePrimarySelection()
+        }
+
+        if let firstFailure = failures.first {
+            if failures.count == 1 {
+                accessError = L10n.format(
+                    "‘%@’ 항목을 휴지통으로 이동할 수 없습니다. %@",
+                    firstFailure.item.name,
+                    firstFailure.error.localizedDescription
+                )
+            } else {
+                accessError = L10n.format(
+                    "%d개 항목을 휴지통으로 이동하지 못했습니다. %@",
+                    failures.count,
+                    firstFailure.error.localizedDescription
+                )
+            }
+        } else {
+            accessError = nil
+        }
+
+        return failures.isEmpty
+    }
+
+    @discardableResult
+    func rename(_ item: FolderItem, to proposedName: String) -> Bool {
+        guard items.contains(where: { $0.id == item.id }) else { return false }
+        let name = proposedName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            accessError = L10n.string("새 이름을 입력하세요.")
+            return false
+        }
+        guard name != ".", name != "..", !name.contains("/") else {
+            accessError = L10n.string("파일 이름에는 ‘/’를 사용할 수 없습니다.")
+            return false
+        }
+        guard name != item.name else {
+            accessError = nil
+            return true
+        }
+
+        let destinationURL = item.url
+            .deletingLastPathComponent()
+            .appendingPathComponent(name, isDirectory: item.isDirectory)
+            .standardizedFileURL
+        guard !itemFileManager.itemExists(at: destinationURL) else {
+            accessError = L10n.format("‘%@’ 이름의 항목이 이미 있습니다.", name)
+            return false
+        }
+
+        do {
+            try itemFileManager.moveItem(at: item.url, to: destinationURL)
+            reload()
+            if let renamedItem = items.first(where: { $0.id == destinationURL.path }) {
+                select(renamedItem)
+            }
+            return true
+        } catch {
+            accessError = L10n.format(
+                "‘%@’ 항목의 이름을 변경할 수 없습니다. %@",
+                item.name,
+                error.localizedDescription
+            )
+            return false
+        }
+    }
+
+    @discardableResult
+    func duplicate(_ requestedItems: [FolderItem]) -> Bool {
+        let availableIDs = Set(items.map(\.id))
+        var seenIDs: Set<String> = []
+        let candidates = requestedItems.filter { item in
+            availableIDs.contains(item.id) && seenIDs.insert(item.id).inserted
+        }
+        guard !candidates.isEmpty else { return false }
+
+        var duplicatedURLs: [URL] = []
+        var failures: [(item: FolderItem, error: Error)] = []
+        for item in candidates {
+            let destinationURL = uniqueDuplicateURL(for: item)
+            do {
+                try itemFileManager.copyItem(at: item.url, to: destinationURL)
+                duplicatedURLs.append(destinationURL)
+            } catch {
+                failures.append((item, error))
+            }
+        }
+
+        if !duplicatedURLs.isEmpty {
+            reload()
+            let duplicatedIDs = Set(duplicatedURLs.map { $0.standardizedFileURL.path })
+            selectedItemIDs = Set(items.map(\.id)).intersection(duplicatedIDs)
+            updatePrimarySelection()
+        }
+
+        if let firstFailure = failures.first {
+            if failures.count == 1 {
+                accessError = L10n.format(
+                    "‘%@’ 항목을 복제할 수 없습니다. %@",
+                    firstFailure.item.name,
+                    firstFailure.error.localizedDescription
+                )
+            } else {
+                accessError = L10n.format(
+                    "%d개 항목을 복제하지 못했습니다. %@",
+                    failures.count,
+                    firstFailure.error.localizedDescription
+                )
+            }
+        } else if !duplicatedURLs.isEmpty {
+            accessError = nil
+        }
+
+        return failures.isEmpty
     }
 
     func sort(by column: FolderSortColumn) {
@@ -268,15 +572,18 @@ final class FolderBrowserState: ObservableObject {
     }
 
     func reload() {
+        reload(preservingExistingError: false)
+    }
+
+    private func reload(preservingExistingError: Bool) {
         guard let currentURL else { return }
+        let existingError = accessError
         do {
             let nextItems = try contentsLoader.contents(of: currentURL)
             items = sortedItems(nextItems)
-            if let selectedItemID,
-               !nextItems.contains(where: { $0.id == selectedItemID }) {
-                self.selectedItemID = nil
-            }
-            accessError = nil
+            selectedItemIDs.formIntersection(Set(nextItems.map(\.id)))
+            updatePrimarySelection()
+            accessError = preservingExistingError ? existingError : nil
         } catch {
             accessError = L10n.format("폴더 내용을 새로 고칠 수 없습니다. %@", error.localizedDescription)
         }
@@ -322,6 +629,9 @@ final class FolderBrowserState: ObservableObject {
         bookmark: Data,
         items: [FolderItem]
     ) {
+        autoReloadWorkItem?.cancel()
+        autoReloadWorkItem = nil
+        changeMonitor.stopMonitoring()
         if let scopedRootURL {
             accessManager.stopAccessing(scopedRootURL)
         }
@@ -330,8 +640,10 @@ final class FolderBrowserState: ObservableObject {
         currentURL = url
         self.items = sortedItems(items)
         selectedItemID = nil
+        selectedItemIDs = []
         accessError = nil
         userDefaults.set(bookmark, forKey: Self.bookmarkDefaultsKey)
+        startMonitoringChanges(in: url)
     }
 
     private func navigate(to url: URL) {
@@ -344,6 +656,7 @@ final class FolderBrowserState: ObservableObject {
             currentURL = nextURL
             items = sortedItems(nextItems)
             selectedItemID = nil
+            selectedItemIDs = []
             accessError = nil
         } catch {
             accessError = L10n.format("폴더를 열 수 없습니다. %@", error.localizedDescription)
@@ -429,6 +742,63 @@ final class FolderBrowserState: ObservableObject {
             return lhs.id < rhs.id
         }
         return comparison == .orderedAscending
+    }
+
+    private func updatePrimarySelection() {
+        selectedItemID = selectedItemIDs.count == 1 ? selectedItemIDs.first : nil
+    }
+
+    private func startMonitoringChanges(in rootURL: URL) {
+        changeMonitor.startMonitoring(rootURL) { [weak self] in
+            guard let self else { return }
+            if Thread.isMainThread {
+                self.scheduleAutoReload()
+            } else {
+                DispatchQueue.main.async { [weak self] in
+                    self?.scheduleAutoReload()
+                }
+            }
+        }
+    }
+
+    private func scheduleAutoReload() {
+        autoReloadWorkItem?.cancel()
+        if autoReloadDelay == 0 {
+            reload(preservingExistingError: true)
+            return
+        }
+
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.reload(preservingExistingError: true)
+        }
+        autoReloadWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + autoReloadDelay, execute: workItem)
+    }
+
+    private func uniqueDuplicateURL(for item: FolderItem) -> URL {
+        let parentURL = item.url.deletingLastPathComponent()
+        let pathExtension = item.isDirectory ? "" : item.url.pathExtension
+        let extensionSuffix = pathExtension.isEmpty ? "" : ".\(pathExtension)"
+        let baseName = pathExtension.isEmpty
+            ? item.name
+            : item.url.deletingPathExtension().lastPathComponent
+
+        var copyNumber = 1
+        while true {
+            let name: String
+            if copyNumber == 1 {
+                name = L10n.format("%@ 복사본%@", baseName, extensionSuffix)
+            } else {
+                name = L10n.format("%@ 복사본 %d%@", baseName, copyNumber, extensionSuffix)
+            }
+            let candidateURL = parentURL
+                .appendingPathComponent(name, isDirectory: item.isDirectory)
+                .standardizedFileURL
+            if !itemFileManager.itemExists(at: candidateURL) {
+                return candidateURL
+            }
+            copyNumber += 1
+        }
     }
 }
 
