@@ -21,6 +21,8 @@ struct RootView: View {
                     ScratchpadView(store: store) {
                         section = .notes
                     }
+                case .folder:
+                    FolderBrowserView(state: store.folderBrowserState)
                 }
             }
             .id(store.appLanguage)
@@ -98,10 +100,12 @@ struct RootView: View {
                     .tag(MainSection.notes)
                 Label("Scratchpad", systemImage: "doc.on.clipboard")
                     .tag(MainSection.scratchpad)
+                Label("폴더", systemImage: "folder")
+                    .tag(MainSection.folder)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(width: 246)
+            .frame(width: 354)
             .id(store.appLanguage)
         }
         .frame(height: 54)

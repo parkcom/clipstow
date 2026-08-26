@@ -130,6 +130,7 @@ struct FocusRequest: Equatable {
 enum MainSection: CaseIterable, Identifiable {
     case notes
     case scratchpad
+    case folder
 
     var id: Self { self }
 }

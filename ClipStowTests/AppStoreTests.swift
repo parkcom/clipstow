@@ -1,4 +1,5 @@
 import Combine
+import UniformTypeIdentifiers
 import XCTest
 @testable import ClipStow
 
@@ -523,6 +524,205 @@ final class AppStoreTests: XCTestCase {
             CGSize(width: 1_000, height: 700)
         )
     }
+
+    func testFolderBrowserListsNavigatesAndForgetsSelectedFolder() throws {
+        let fileManager = FileManager.default
+        let rootURL = fileManager.temporaryDirectory
+            .appendingPathComponent("ClipStowFolderBrowserTests-\(UUID().uuidString)", isDirectory: true)
+        let nestedURL = rootURL.appendingPathComponent("Nested", isDirectory: true)
+        try fileManager.createDirectory(at: nestedURL, withIntermediateDirectories: true)
+        try Data("alpha".utf8).write(to: rootURL.appendingPathComponent("Alpha.txt"))
+        try Data("zulu".utf8).write(to: rootURL.appendingPathComponent("Zulu.txt"))
+        try Data("hidden".utf8).write(to: rootURL.appendingPathComponent(".Hidden.txt"))
+        try Data("nested".utf8).write(to: nestedURL.appendingPathComponent("Inside.md"))
+        defer { try? fileManager.removeItem(at: rootURL) }
+
+        let accessManager = FakeSecurityScopedFolderAccessManager()
+        let state = FolderBrowserState(
+            userDefaults: defaults,
+            accessManager: accessManager
+        )
+
+        XCTAssertTrue(state.selectFolder(rootURL))
+        XCTAssertEqual(state.items.map(\.name), ["Nested", "Alpha.txt", "Zulu.txt"])
+        XCTAssertTrue(state.items[0].isDirectory)
+        XCTAssertEqual(state.items[1].byteCount, 5)
+        XCTAssertEqual(state.currentPathDescription, rootURL.lastPathComponent)
+        XCTAssertNotNil(defaults.data(forKey: FolderBrowserState.bookmarkDefaultsKey))
+
+        state.open(state.items[0])
+        XCTAssertEqual(state.currentURL, nestedURL.standardizedFileURL)
+        XCTAssertEqual(state.items.map(\.name), ["Inside.md"])
+        XCTAssertFalse(state.isAtRoot)
+
+        state.goUp()
+        XCTAssertEqual(state.currentURL, rootURL.standardizedFileURL)
+        XCTAssertTrue(state.isAtRoot)
+
+        state.forgetFolder()
+        XCTAssertNil(state.rootURL)
+        XCTAssertTrue(state.items.isEmpty)
+        XCTAssertNil(defaults.data(forKey: FolderBrowserState.bookmarkDefaultsKey))
+        XCTAssertEqual(accessManager.startedURLs, [rootURL.standardizedFileURL])
+        XCTAssertEqual(accessManager.stoppedURLs, [rootURL.standardizedFileURL])
+    }
+
+    func testFolderBrowserSortsEachColumnInBothDirections() {
+        let rootURL = URL(fileURLWithPath: "/tmp/ClipStowFolderSortTests", isDirectory: true)
+        let folder = FolderItem(
+            url: rootURL.appendingPathComponent("Folder", isDirectory: true),
+            isDirectory: true,
+            byteCount: nil,
+            modifiedAt: Date(timeIntervalSince1970: 400)
+        )
+        let alpha = FolderItem(
+            url: rootURL.appendingPathComponent("Alpha.txt"),
+            isDirectory: false,
+            byteCount: 300,
+            modifiedAt: Date(timeIntervalSince1970: 200)
+        )
+        let bravo = FolderItem(
+            url: rootURL.appendingPathComponent("Bravo.txt"),
+            isDirectory: false,
+            byteCount: 100,
+            modifiedAt: Date(timeIntervalSince1970: 300)
+        )
+        let charlie = FolderItem(
+            url: rootURL.appendingPathComponent("Charlie.txt"),
+            isDirectory: false,
+            byteCount: 200,
+            modifiedAt: Date(timeIntervalSince1970: 100)
+        )
+        let state = FolderBrowserState(
+            userDefaults: defaults,
+            contentsLoader: StubFolderContentsLoader(items: [charlie, folder, alpha, bravo]),
+            accessManager: FakeSecurityScopedFolderAccessManager()
+        )
+
+        XCTAssertTrue(state.selectFolder(rootURL))
+        XCTAssertEqual(state.sortColumn, .name)
+        XCTAssertEqual(state.sortDirection, .ascending)
+        XCTAssertEqual(state.items.map(\.name), ["Folder", "Alpha.txt", "Bravo.txt", "Charlie.txt"])
+
+        state.select(alpha)
+        state.sort(by: .name)
+        XCTAssertEqual(state.sortDirection, .descending)
+        XCTAssertEqual(state.items.map(\.name), ["Folder", "Charlie.txt", "Bravo.txt", "Alpha.txt"])
+        XCTAssertEqual(state.selectedItem, alpha)
+
+        state.sort(by: .modifiedDate)
+        XCTAssertEqual(state.sortDirection, .ascending)
+        XCTAssertEqual(state.items.map(\.name), ["Folder", "Charlie.txt", "Alpha.txt", "Bravo.txt"])
+
+        state.sort(by: .modifiedDate)
+        XCTAssertEqual(state.sortDirection, .descending)
+        XCTAssertEqual(state.items.map(\.name), ["Folder", "Bravo.txt", "Alpha.txt", "Charlie.txt"])
+
+        state.sort(by: .size)
+        XCTAssertEqual(state.sortDirection, .ascending)
+        XCTAssertEqual(state.items.map(\.name), ["Folder", "Bravo.txt", "Charlie.txt", "Alpha.txt"])
+
+        state.sort(by: .size)
+        XCTAssertEqual(state.sortDirection, .descending)
+        XCTAssertEqual(state.items.map(\.name), ["Folder", "Alpha.txt", "Charlie.txt", "Bravo.txt"])
+
+        state.forgetFolder()
+    }
+
+    func testFolderBrowserRestoresPersistedSecurityScopedBookmark() throws {
+        let fileManager = FileManager.default
+        let rootURL = fileManager.temporaryDirectory
+            .appendingPathComponent("ClipStowFolderRestoreTests-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        try Data("restored".utf8).write(to: rootURL.appendingPathComponent("Restored.txt"))
+        defer { try? fileManager.removeItem(at: rootURL) }
+
+        let accessManager = FakeSecurityScopedFolderAccessManager()
+        var firstState: FolderBrowserState? = FolderBrowserState(
+            userDefaults: defaults,
+            accessManager: accessManager
+        )
+        XCTAssertTrue(firstState?.selectFolder(rootURL) == true)
+
+        let restoredState = FolderBrowserState(
+            userDefaults: defaults,
+            accessManager: accessManager
+        )
+
+        XCTAssertEqual(restoredState.rootURL, rootURL.standardizedFileURL)
+        XCTAssertEqual(restoredState.items.map(\.name), ["Restored.txt"])
+        XCTAssertEqual(accessManager.resolvedBookmarkCount, 1)
+
+        firstState?.forgetFolder()
+        firstState = nil
+        restoredState.forgetFolder()
+    }
+
+    func testFolderBrowserKeepsExistingSelectionWhenNewFolderAccessFails() throws {
+        let fileManager = FileManager.default
+        let rootURL = fileManager.temporaryDirectory
+            .appendingPathComponent("ClipStowFolderAccessTests-\(UUID().uuidString)", isDirectory: true)
+        let rejectedURL = fileManager.temporaryDirectory
+            .appendingPathComponent("ClipStowRejectedFolder-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: rejectedURL, withIntermediateDirectories: true)
+        defer {
+            try? fileManager.removeItem(at: rootURL)
+            try? fileManager.removeItem(at: rejectedURL)
+        }
+
+        let accessManager = FakeSecurityScopedFolderAccessManager()
+        let state = FolderBrowserState(
+            userDefaults: defaults,
+            accessManager: accessManager
+        )
+        XCTAssertTrue(state.selectFolder(rootURL))
+
+        accessManager.rejectedURL = rejectedURL.standardizedFileURL
+        XCTAssertFalse(state.selectFolder(rejectedURL))
+
+        XCTAssertEqual(state.rootURL, rootURL.standardizedFileURL)
+        XCTAssertNotNil(state.accessError)
+    }
+
+    func testTextFilePreviewIsBoundedWithoutChangingTheSourceFile() throws {
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ClipStowTextPreview-\(UUID().uuidString).txt")
+        let source = String(repeating: "미리보기 줄\n", count: 60_000)
+        try Data(source.utf8).write(to: fileURL)
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+
+        let preview = try TextFilePreviewLoader.load(from: fileURL)
+
+        XCTAssertTrue(preview.isTruncated)
+        XCTAssertLessThanOrEqual(preview.text.utf8.count, TextFilePreviewLoader.byteLimit)
+        XCTAssertTrue(source.hasPrefix(preview.text))
+        XCTAssertEqual(try String(contentsOf: fileURL, encoding: .utf8), source)
+    }
+
+    func testFileDragProviderExportsAFileURLAndReadableFileRepresentation() throws {
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ClipStowDrag-\(UUID().uuidString).txt")
+        try Data("drag me".utf8).write(to: fileURL)
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+
+        let provider = FileDragProvider.make(for: fileURL)
+        XCTAssertTrue(provider.registeredTypeIdentifiers.contains(UTType.fileURL.identifier))
+        XCTAssertTrue(provider.registeredTypeIdentifiers.contains(UTType.plainText.identifier))
+
+        let loaded = expectation(description: "file representation loaded")
+        provider.loadFileRepresentation(forTypeIdentifier: UTType.plainText.identifier) { url, error in
+            XCTAssertNil(error)
+            do {
+                let loadedURL = try XCTUnwrap(url)
+                XCTAssertEqual(try String(contentsOf: loadedURL, encoding: .utf8), "drag me")
+            } catch {
+                XCTFail("Could not read dragged file representation: \(error)")
+            }
+            loaded.fulfill()
+        }
+        wait(for: [loaded], timeout: 2)
+    }
 }
 
 enum TestError: Error {
@@ -575,5 +775,41 @@ final class FakeLoginItemManager: LoginItemManaging {
             state = .disabled
         }
         completion(unregisterError)
+    }
+}
+
+final class FakeSecurityScopedFolderAccessManager: SecurityScopedFolderAccessManaging {
+    var rejectedURL: URL?
+    private(set) var startedURLs: [URL] = []
+    private(set) var stoppedURLs: [URL] = []
+    private(set) var resolvedBookmarkCount = 0
+
+    func startAccessing(_ url: URL) -> Bool {
+        let standardizedURL = url.standardizedFileURL
+        guard standardizedURL != rejectedURL else { return false }
+        startedURLs.append(standardizedURL)
+        return true
+    }
+
+    func stopAccessing(_ url: URL) {
+        stoppedURLs.append(url.standardizedFileURL)
+    }
+
+    func makeBookmark(for url: URL) throws -> Data {
+        Data(url.standardizedFileURL.path.utf8)
+    }
+
+    func resolveBookmark(_ data: Data) throws -> (url: URL, isStale: Bool) {
+        resolvedBookmarkCount += 1
+        let path = try XCTUnwrap(String(data: data, encoding: .utf8))
+        return (URL(fileURLWithPath: path), false)
+    }
+}
+
+struct StubFolderContentsLoader: FolderContentsLoading {
+    let items: [FolderItem]
+
+    func contents(of directoryURL: URL) throws -> [FolderItem] {
+        items
     }
 }

@@ -128,6 +128,7 @@ final class AppStore: ObservableObject {
 
     let editorDraft = EditorDraft()
     let scratchpadState = ScratchpadState()
+    let folderBrowserState: FolderBrowserState
 
     var onCaptureSettingChanged: ((Bool) -> Void)?
     var onKeepPopoverOpenChanged: ((Bool) -> Void)?
@@ -158,6 +159,7 @@ final class AppStore: ObservableObject {
         self.saveDebounce = saveDebounce
         self.now = now
         self.loginItemManager = loginItemManager
+        folderBrowserState = FolderBrowserState(userDefaults: userDefaults)
         isCaptureEnabled = userDefaults.bool(forKey: Self.captureDefaultsKey)
         uiFontSize = Self.storedFontSize(
             in: userDefaults,

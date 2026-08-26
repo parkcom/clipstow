@@ -17,6 +17,7 @@ ClipStow는 메뉴막대와 사용자가 지정한 전역 단축키에서 빠르
 - Markdown 편집 및 미리보기
 - 복사한 텍스트를 메모리 전용 Scratchpad에 수집
 - Scratchpad 항목을 개별 또는 한 번에 노트로 저장
+- 사용자가 선택한 폴더 탐색, 이름·수정일·크기별 양방향 정렬, Quick Look 파일 미리보기 및 다른 앱으로 파일 첨부 드래그
 - 팝오버 크기 조절·고정과 영역별 글자 크기 설정
 - 로그인 시 실행, 단축키 변경과 충돌 안내
 - 영어·한국어·일본어 UI
@@ -60,6 +61,7 @@ xcodebuild -project ClipStow.xcodeproj -scheme ClipStow -destination 'platform=m
 - 카테고리를 삭제하면 포함된 모든 노트도 영구 삭제되며 실행 전에 확인합니다.
 - Scratchpad에서 Copy Capture를 켜면 다른 앱에서 복사한 텍스트가 누적됩니다.
 - Scratchpad 항목은 개별적으로 노트에 복사하거나 삭제할 수 있습니다.
+- 폴더 탭에서 폴더를 선택하고 이름·수정일·크기 헤더를 클릭해 오름차순 또는 내림차순으로 정렬할 수 있습니다. 파일을 선택하거나 더블클릭해 미리보고, 파일 행을 다른 앱으로 드래그해 첨부할 수 있습니다.
 - 팝오버 크기와 고정 상태, 앱 언어, 단축키 및 글자 크기는 설정에서 변경합니다.
 
 ## 저장과 개인정보
@@ -70,14 +72,14 @@ xcodebuild -project ClipStow.xcodeproj -scheme ClipStow -destination 'platform=m
 ~/Library/Containers/com.parkcom.clipstow/Data/Library/Application Support/ClipStow/store.json
 ```
 
-Scratchpad 텍스트는 디스크에 저장하지 않습니다. 계정, 분석 도구, 텔레메트리, 클라우드 동기화 및 앱 자체 네트워크 통신도 없습니다. 자세한 내용은 [개인정보 안내](../PRIVACY.md)를 참고하세요.
+Scratchpad 텍스트는 디스크에 저장하지 않습니다. 폴더 접근은 사용자가 선택한 폴더로 제한된 읽기 전용이며, 앱 재실행 후 접근을 복원하기 위한 보안 범위 북마크만 저장합니다. 계정, 분석 도구, 텔레메트리, 클라우드 동기화 및 앱 자체 네트워크 통신도 없습니다. 자세한 내용은 [개인정보 안내](../PRIVACY.md)를 참고하세요.
 
 Copy Capture는 `⌘C` 키를 감시하거나 가로채지 않고 `NSPasteboard.changeCount`를 250ms 간격으로 확인합니다. macOS가 Pasteboard 접근을 요청할 수 있으며, 거부했다면 시스템 설정에서 다시 허용해야 합니다.
 
 ## 제한사항
 
 - 한 번의 폴링 사이에 덮어쓴 중간 클립보드 내용은 복구할 수 없습니다.
-- 검색, 첨부 파일, 태그, 동기화, 공유, 버전 기록 및 삭제 복구는 제공하지 않습니다.
+- 검색, 노트 내부 첨부 파일 저장, 태그, 동기화, 공유, 버전 기록 및 삭제 복구는 제공하지 않습니다.
 - 저장하지 않은 Scratchpad는 앱 종료 시 사라집니다.
 - 자동 업데이트는 제공하지 않으며 새 버전은 GitHub Releases에서 직접 설치해야 합니다.
 
