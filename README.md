@@ -28,7 +28,7 @@ ClipStow is a native macOS menu bar app for quickly capturing Markdown notes and
 
 ## Download and install
 
-1. Download the latest `ClipStow-*.dmg` from [GitHub Releases](https://github.com/parkcom/clipstow/releases/latest).
+1. Download the latest `ClipStow-*.dmg` from [GitHub Releases](https://github.com/parkcom/clipstow/releases).
 2. Open the DMG and drag **ClipStow** into **Applications**.
 3. Launch ClipStow from Applications. It appears in the menu bar rather than the Dock.
 

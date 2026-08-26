@@ -25,7 +25,7 @@ ClipStow는 메뉴막대와 사용자가 지정한 전역 단축키에서 빠르
 
 ## 다운로드 및 설치
 
-1. [GitHub Releases](https://github.com/parkcom/clipstow/releases/latest)에서 최신 `ClipStow-*.dmg`를 다운로드합니다.
+1. [GitHub Releases](https://github.com/parkcom/clipstow/releases)에서 최신 `ClipStow-*.dmg`를 다운로드합니다.
 2. DMG를 열고 **ClipStow**를 **Applications(응용 프로그램)** 폴더로 드래그합니다.
 3. 응용 프로그램 폴더에서 ClipStow를 실행합니다. Dock 대신 메뉴막대에 표시됩니다.
 
